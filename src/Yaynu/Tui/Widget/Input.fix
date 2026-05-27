@@ -1,4 +1,18 @@
 // Input widget: an editable UTF-8 string with a cursor.
+//
+// Rendering: in addition to drawing the reverse-video cursor block,
+// `render_input` publishes the input's logical cursor cell to the
+// frame via `Yaynu.Tui.Frame::set_cursor`. The run loop then moves
+// the terminal's hardware cursor there after writing the frame
+// diff. This is what lets IME pre-edit (Japanese / Chinese / Korean
+// composition) appear at the right column instead of one or two
+// cells to the right.
+//
+// Focus convention: when `cursor_style == Style::default` the input
+// is treated as unfocused and the frame cursor is NOT published —
+// matching the `input_demo` convention where the unfocused widget
+// clears its cursor style. Multiple focused inputs in one `view`
+// follow last-writer-wins; render the focused one last.
 module Yaynu.Tui.Widget.Input;
 
 import Yaynu.Tui.Buffer;
@@ -252,9 +266,15 @@ _render_single = |inp, rect, frame| (
         // placeholder attributes (e.g. dim) are preserved under the
         // cursor block.
         let cell_style = _merge_style(body_style, inp.@cursor_style);
-        f.mod_buffer(|buf|
+        let f = f.mod_buffer(|buf|
             Buffer::set_cell(rect.@x + cx, rect.@y, Cell { ch : cell_ch, style : cell_style }, buf)
-        )
+        );
+        // Publish the logical cursor so the terminal's hardware
+        // cursor lands here (required for IME pre-edit positioning).
+        // Skip when unfocused — convention: cursor_style == default.
+        if _is_unfocused(inp) { f } else {
+            f.Yaynu.Tui.Frame::set_cursor(rect.@x + cx, rect.@y)
+        }
     }
 );
 
@@ -321,15 +341,27 @@ _render_multi = |inp, rect, frame| (
         let cell_ch = if cx < line_w { _cluster_at_col(displayed_line, cx) } else { " " };
         let body_style = if is_empty { inp.@style.set_dim(true) } else { inp.@style };
         let cell_style = _merge_style(body_style, inp.@cursor_style);
-        f.mod_buffer(|buf|
+        let f = f.mod_buffer(|buf|
             Buffer::set_cell(
                 rect.@x + cx, rect.@y + cy,
                 Cell { ch : cell_ch, style : cell_style },
                 buf
             )
-        )
+        );
+        // Publish the logical cursor (see `_render_single`). Skip
+        // when unfocused — convention: cursor_style == default.
+        if _is_unfocused(inp) { f } else {
+            f.Yaynu.Tui.Frame::set_cursor(rect.@x + cx, rect.@y + cy)
+        }
     }
 );
+
+// Treat an input as unfocused when its `cursor_style` equals the
+// default style. This matches the `input_demo` convention where the
+// unfocused widget clears its cursor style; we use it to decide
+// whether to publish the frame cursor.
+_is_unfocused : Input -> Bool;
+_is_unfocused = |inp| eq_style(inp.@cursor_style, Style::default);
 
 // Combine an underlying cell style with the cursor_style overlay.
 // fg/bg from cursor_style win when set, otherwise fall through to

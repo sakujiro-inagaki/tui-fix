@@ -43,6 +43,7 @@ files = [
     "tests/TabsTest.fix",
     "tests/SpinnerTest.fix",
     "tests/ProgressTest.fix",
+    "tests/EventTest.fix",
 ]
 
 static_links = ["tui_shim"]

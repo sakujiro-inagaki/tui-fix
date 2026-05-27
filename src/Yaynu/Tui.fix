@@ -60,7 +60,11 @@ run = |initial_state| (
     Yaynu.Term.Size::install_resize_handler.lift;;
     Yaynu.Term.Output::write(Yaynu.Term.Ansi::enter_alternate_screen);;
     Yaynu.Term.Output::write(Yaynu.Term.Ansi::clear_screen);;
-    Yaynu.Term.Output::write(Yaynu.Term.Ansi::hide_cursor);;
+    // Note: the cursor is no longer unconditionally hidden at startup.
+    // The run loop now decides per frame based on `Frame::@cursor` —
+    // hidden when unset, moved-and-shown when a widget published a
+    // logical position. The teardown still calls `show_cursor` so the
+    // user's terminal is left with a visible cursor on exit.
     let body_res = *(_run_loop(initial_state).to_result).lift;
     // Best-effort teardown. We must restore the cursor + main screen
     // even if some part of teardown fails so the user's terminal does
@@ -89,6 +93,15 @@ _loop = |state, prev_buf, rect| (
     let next_buf = frame.@buffer;
     let diff_str = Diff::diff_to_ansi(prev_buf, next_buf);
     Yaynu.Term.Output::write(diff_str);;
+    // Position the terminal's hardware cursor based on the frame's
+    // logical cursor. IME pre-edit is drawn by the terminal at the
+    // cursor cell, so this is what makes Japanese/Chinese/Korean
+    // composition land in the right column. `move_to` is 1-based.
+    let cursor_str = match frame.@cursor {
+        some((c, r)) => Yaynu.Term.Ansi::move_to(r + 1, c + 1) + Yaynu.Term.Ansi::show_cursor,
+        none()       => Yaynu.Term.Ansi::hide_cursor
+    };
+    Yaynu.Term.Output::write(cursor_str);;
     let tick_ms = TuiApp::tick_rate(state);
     let timeout : I64 = match tick_ms {
         none() => 1000,
@@ -96,39 +109,39 @@ _loop = |state, prev_buf, rect| (
     };
     let byte_opt = *Yaynu.Term.Input::read_byte_timeout(timeout);
     let resized = *Yaynu.Term.Size::check_resized.lift;
-    // Build the event:
-    //   - timeout + resize  → Event::resize with the new size
-    //   - timeout alone     → Event::tick
-    //   - byte arrived      → drain the rest non-blocking and parse
-    let event : Event = *(
+    // Build the events list:
+    //   - timeout + resize  → [Event::resize] with the new size
+    //   - timeout alone     → [Event::tick]
+    //   - byte arrived      → drain the rest non-blocking, parse to
+    //                         a sequence of Key events. IME commits,
+    //                         pastes, and rapid typing all surface as
+    //                         multiple events here.
+    let events : Array Event = *(
         match byte_opt {
             none() => (
                 if resized {
                     let new_sz = *Yaynu.Term.Size::TermSize::get;
-                    pure $ Event::resize((new_sz.@rows, new_sz.@cols))
+                    pure $ [Event::resize((new_sz.@rows, new_sz.@cols))]
                 } else {
-                    pure $ Event::tick(())
+                    pure $ [Event::tick(())]
                 }
             ),
-            some(b) => _read_key_event(b)
+            some(b) => _read_key_events(b)
         }
     );
-    // Force-quit on Ctrl+C even if the user's `update` would otherwise
-    // ignore it. This is the standard TUI convention and protects us
-    // from apps that forget to wire it.
-    let force_quit = match event {
-        key(k) => (match k { ctrl(c) => c == "c", _ => false }),
-        _ => false
-    };
-    if force_quit { pure() };
-    let result = TuiApp::update(event, state);
-    match result {
-        quit() => pure(),
-        continue(new_state) => (
-            // After any event, check for an asynchronous resize and
-            // resync the rect / previous buffer if needed.
+    // Process events in order; exit on the first force-quit or
+    // user-requested `quit` (matches existing semantics; remaining
+    // events drop).
+    match _process_events(events, state) {
+        none() => pure(),
+        some(continue_state) => (
+            // After processing the batch, check for an asynchronous
+            // resize and resync the rect / previous buffer if needed.
             let resized_late = *Yaynu.Term.Size::check_resized.lift;
-            let needs_resync = resized_late || (match event { resize(_) => true, _ => false });
+            let saw_resize = events.to_iter.fold(false, |ev, acc|
+                acc || (match ev { resize(_) => true, _ => false })
+            );
+            let needs_resync = resized_late || saw_resize;
             let (prev_buf2, rect2) = *(
                 if needs_resync {
                     let new_sz = *Yaynu.Term.Size::TermSize::get;
@@ -138,35 +151,93 @@ _loop = |state, prev_buf, rect| (
                     pure $ (next_buf, rect)
                 }
             );
-            _loop(new_state, prev_buf2, rect2)
+            _loop(continue_state, prev_buf2, rect2)
         )
     }
 );
 
+// Iterate events through `update`, threading state. Returns `none()`
+// when the loop should exit (force-quit on Ctrl+C, or the user's
+// `update` returned `quit`), and `some(state)` to continue with the
+// updated state. Pure: `update` is the only consumer of the event
+// and runs in the user state, not in IO.
+_process_events : [s : TuiApp] Array Event -> s -> Option s;
+_process_events = |events, state| (
+    let n = events.get_size;
+    loop((0, state), |(i, st)| (
+        if i >= n { break $ Option::some(st) };
+        let ev = events.@(i);
+        let force_quit = match ev {
+            key(k) => (match k { ctrl(c) => c == "c", _ => false }),
+            _ => false
+        };
+        if force_quit { break $ Option::none() };
+        let result = TuiApp::update(ev, st);
+        match result {
+            quit() => break $ Option::none(),
+            continue(new_state) => continue $ (i + 1, new_state)
+        }
+    ))
+);
+
+// Pure helper: drain a byte buffer into a sequence of `Key` events.
+//
+// Repeatedly calls `Yaynu.Term.Key::parse` on the unread suffix and:
+//   - `complete((k, n))`: append `k`, advance by `n` bytes, continue.
+//   - `invalid(n)`     : drop `n` bytes, continue (matches the prior
+//                        single-key behaviour where invalid surfaces
+//                        as Key::unknown that widgets ignore).
+//   - `incomplete()`   : stop. The tail (partial UTF-8 / partial CSI)
+//                        is **discarded** — the next read does not
+//                        concatenate with it, so carrying state would
+//                        require restructuring the loop. Documented
+//                        v0.1 limitation.
+//
+// Bare-ESC fallback: if the drain produced no keys but the input was
+// a single 0x1B byte (the canonical "lone Escape" case after the CSI
+// sub-parser left it as incomplete), the caller in
+// `_read_key_events` adds a `Key::escape` event. This helper itself
+// stays pure and returns `[]` in that case so unit tests of the
+// drain alone are easy to read.
+_drain_keys : Array U8 -> Array Yaynu.Term.Key::Key;
+_drain_keys = |bytes| (
+    let n = bytes.get_size;
+    loop((0, []), |(off, acc)| (
+        if off >= n { break $ acc };
+        let tail = Array::from_map(n - off, |i| bytes.@(off + i));
+        let r = Yaynu.Term.Key::parse(tail);
+        match r {
+            complete((k, consumed)) => (
+                continue $ (off + consumed, acc.push_back(k))
+            ),
+            invalid(consumed) => (
+                // Drop the invalid prefix and keep parsing the rest.
+                let step = if consumed <= 0 { 1 } else { consumed };
+                continue $ (off + step, acc)
+            ),
+            incomplete() => break $ acc
+        }
+    ))
+);
+
 // Drain everything currently available on stdin (best-effort) and
-// parse the resulting buffer as a Key. A bare ESC with no follow-up
-// bytes is interpreted as `Key::escape()` — without this, a lone Esc
-// press would be reported as `Key::unknown([0x1B])` because the CSI
-// sub-parser leaves it as `incomplete`.
-_read_key_event : U8 -> IOFail Event;
-_read_key_event = |first_byte| (
+// parse the resulting buffer into a sequence of `Event::key` events.
+// A bare ESC with no follow-up bytes is interpreted as `Key::escape`
+// — without this, a lone Esc press would be reported as
+// `Key::unknown([0x1B])` because the CSI sub-parser leaves it as
+// `incomplete`.
+_read_key_events : U8 -> IOFail (Array Event);
+_read_key_events = |first_byte| (
     let rest = *Yaynu.Term.Input::read_available;
     let bytes : Array U8 = Array::from_map(1 + rest.get_size, |i|
         if i == 0 { first_byte } else { rest.@(i - 1) }
     );
-    let r = Yaynu.Term.Key::parse(bytes);
-    let k = match r {
-        complete((k, _)) => k,
-        incomplete() => (
-            // Bare ESC sat in the buffer with nothing else following.
-            // Treat it as Key::escape so the app can quit on it.
-            if bytes.get_size > 0 && bytes.@(0) == 27_U8 {
-                Yaynu.Term.Key::Key::escape()
-            } else {
-                Yaynu.Term.Key::Key::unknown(bytes)
-            }
-        ),
-        invalid(_) => Yaynu.Term.Key::Key::unknown(bytes)
+    let keys = _drain_keys(bytes);
+    let keys = if keys.get_size == 0 && bytes.get_size > 0 && bytes.@(0) == 27_U8 {
+        // Bare ESC. Preserve single-event behaviour.
+        [Yaynu.Term.Key::Key::escape()]
+    } else {
+        keys
     };
-    pure $ Event::key(k)
+    pure $ keys.to_iter.map(|k| Event::key(k)).to_array
 );

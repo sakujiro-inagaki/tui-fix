@@ -1,33 +1,4 @@
-# tui-event-loop Specification
-
-## Purpose
-
-Defines the event-driven application contract for the TUI library: the `Event` type that enumerates inputs (keys, resize, tick, custom), the `TuiApp` trait that user applications implement, and the `Yaynu.Tui::run` driver that owns raw mode, the render/wait/read/update cycle, and terminal restoration on exit.
-
-## Requirements
-
-### Requirement: Event type enumerates inputs to the application
-
-The system SHALL provide `Event` as a box union with constructors `key : Key` (where `Key` is the type exported by `term`), `resize : (I64, I64)` carrying the new `(rows, cols)`, `tick : ()` for timed wake-ups, and `custom : String` for application-defined notifications.
-
-#### Scenario: Event values are constructible and pattern-matchable
-
-- **WHEN** a caller constructs `Event::key(Key::escape)`, `Event::resize((24, 80))`, `Event::tick(())`, `Event::custom("done")`
-- **THEN** all values type-check and pattern-match against the corresponding constructor
-
-### Requirement: TuiApp trait defines the application contract
-
-The system SHALL provide a trait `TuiApp` with the following methods that an application state type SHALL implement: `initial : s` (the starting state), `view : s -> Frame -> Frame` (render the state into the supplied frame), `update : Event -> s -> UpdateResult s` (consume an event and return either a continuation or a quit), and `tick_rate : s -> Option I64` (the tick interval in milliseconds, or `Option::none` to disable ticks for the current state). `UpdateResult s` SHALL be a box union with constructors `continue : s` and `quit : ()`.
-
-#### Scenario: An app with no tick rate never receives Event::tick
-
-- **WHEN** an app's `tick_rate` returns `Option::none` for all states and the user does not press a key
-- **THEN** `update` is never invoked with `Event::tick`
-
-#### Scenario: Quit terminates the loop
-
-- **WHEN** `update` returns `UpdateResult::quit(())` for any event
-- **THEN** `Yaynu.Tui::run` exits raw mode and returns success
+## MODIFIED Requirements
 
 ### Requirement: run drives the application end-to-end
 
@@ -97,18 +68,3 @@ The run loop MUST NOT block on any I/O other than the timed event read; in parti
 - **GIVEN** a frame whose `view` only calls `frame.render_text` and `frame.render_paragraph`
 - **WHEN** the run loop renders that frame
 - **THEN** after the diff write the loop writes `hide_cursor` and no `move_to`
-
-### Requirement: Custom events can be injected from the update function
-
-The system SHALL allow an application to schedule a `custom` event for delivery on the next loop iteration by returning a state from `update` that the application itself recognises as "fire custom on next tick", then producing the custom payload during the next `Event::tick` handler. v0.1 SHALL NOT expose a cross-thread injection handle; external injection from a separate execution context is explicitly out of scope.
-
-#### Scenario: Application can simulate a custom event via its own state machine
-
-- **GIVEN** an app whose `update` on `Event::tick` checks a state flag and, if set, recursively dispatches a `Event::custom("ready")` to itself before returning
-- **WHEN** the flag is raised during a key handler and the next tick fires
-- **THEN** the app observes the custom event and behaves accordingly
-
-#### Scenario: No public cross-thread injection API exists in v0.1
-
-- **WHEN** an integrator looks for a `run_with_handle` style API
-- **THEN** none is exposed; the integrator must use the tick-based polling pattern

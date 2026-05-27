@@ -94,7 +94,15 @@ frame.render_list(l, rect)
 ```
 
 ```fix
-// Input with placeholder.
+// Input with placeholder. `render_input` publishes the input's
+// logical cursor cell to the frame; the run loop then moves the
+// terminal's hardware cursor there. This is what lets IME pre-edit
+// (Japanese, Chinese, Korean composition) appear at the right
+// column — and what makes IME-committed strings of any length land
+// at the cursor position rather than only the first character.
+//
+// To mark an input as unfocused (skip publishing the frame cursor),
+// clear its cursor style: `inp.set_cursor_style(Style::default)`.
 let i = Input::new.with_placeholder("type something...");
 frame.render_input(i, rect)
 ```

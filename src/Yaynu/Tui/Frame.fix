@@ -2,6 +2,13 @@
 //
 // Widget rendering calls (`render_text`, `render_border`, ...) are
 // methods on Frame so they can be chained inside an app's `view`.
+//
+// The optional `cursor` field carries a logical cursor position
+// `(col, row)` in screen coordinates. Widgets (e.g. `Input`) publish
+// their cursor via `set_cursor`; the run loop, after writing the
+// diff, positions the terminal's hardware cursor there (and shows
+// it). When unset, the run loop hides the hardware cursor. Multiple
+// widgets writing during one `view` follow last-writer-wins.
 module Yaynu.Tui.Frame;
 
 import Yaynu.Tui.Buffer;
@@ -12,7 +19,8 @@ import Yaynu.Tui.Width;
 
 type Frame = box struct {
     size   : Rect,
-    buffer : Buffer
+    buffer : Buffer,
+    cursor : Option (I64, I64)
 };
 
 namespace Frame {
@@ -21,7 +29,8 @@ namespace Frame {
     new = |r| (
         Frame {
             size   : r,
-            buffer : Buffer::empty(r.@width, r.@height)
+            buffer : Buffer::empty(r.@width, r.@height),
+            cursor : Option::none()
         }
     );
 
@@ -40,3 +49,14 @@ namespace Frame {
     fill : Rect -> Cell -> Frame -> Frame;
     fill = |rect, c, frame| frame.mod_buffer(|b| Buffer::fill(rect, c, b));
 }
+
+// Publish a logical cursor at `(col, row)` (screen coordinates).
+// The run loop applies this after writing the frame diff: it moves
+// the terminal's hardware cursor to that cell and shows it. Last
+// writer wins when called multiple times within one `view`.
+//
+// Lives at module scope (not in `namespace Frame`) to coexist with
+// the auto-generated `Frame::set_cursor : Option (I64, I64) -> Frame
+// -> Frame` field setter.
+set_cursor : I64 -> I64 -> Frame -> Frame;
+set_cursor = |col, row, frame| frame.set_cursor(Option::some((col, row)));

@@ -1,6 +1,10 @@
 module InputTest;
 
 import Yaynu.Tui.Widget.Input;
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
 import Yaynu.Term.Key;
 
 run : IO ();
@@ -30,5 +34,32 @@ run = (
     let i_max : Input = Input::new.set_max_length(Option::some(2)).handle_key(Key::char("a")).handle_key(Key::char("b"));
     let i_max2 = i_max.handle_key(Key::char("c"));
     assert_eq(|_|"max length blocks", i_max2.text, "ab");;
+
+    // 4.4.1 ASCII input, cursor at byte 2, rect at (4, 1) → Frame::@cursor == some((6, 1)).
+    let ai = Input::new.set_text("abcd").set_cursor(2);
+    let af = Frame::new(Rect::make(0, 0, 20, 5));
+    let af1 = af.render_input(ai, Rect::make(4, 1, 10, 1));
+    let (acx, acy) = af1.@cursor.as_some;
+    assert_eq(|_|"ascii input frame cursor col", acx, 6);;
+    assert_eq(|_|"ascii input frame cursor row", acy, 1);;
+
+    // 4.4.2 Wide-char input "あい" (6 bytes), cursor at byte 6, rect at (0, 0) → some((4, 0)).
+    let wi = Input::new.set_text("あい").set_cursor(6);
+    let wf = Frame::new(Rect::make(0, 0, 20, 5));
+    let wf1 = wf.render_input(wi, Rect::make(0, 0, 20, 1));
+    let (wcx, wcy) = wf1.@cursor.as_some;
+    assert_eq(|_|"wide input frame cursor col", wcx, 4);;
+    assert_eq(|_|"wide input frame cursor row", wcy, 0);;
+
+    // 4.4.3 Unfocused (cursor_style == default) does NOT publish a frame cursor.
+    let uf = Input::new.set_text("abcd").set_cursor(2).set_cursor_style(Style::default);
+    let uff = Frame::new(Rect::make(0, 0, 20, 5));
+    let uff1 = uff.render_input(uf, Rect::make(4, 1, 10, 1));
+    assert_eq(|_|"unfocused leaves frame cursor unset", uff1.@cursor.is_none, true);;
+
+    // 4.5 IME-style commit via Input::handle_key applies the whole string.
+    let ime = Input::new.handle_key(Key::char("こんにちは"));
+    assert_eq(|_|"ime text", ime.text, "こんにちは");;
+    assert_eq(|_|"ime cursor bytes", ime.@cursor, 15);;
     pure()
 );

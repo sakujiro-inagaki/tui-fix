@@ -21,5 +21,18 @@ run = (
     let f4 = f.render_text("abc", Style::default, Rect::make(0, 0, 10, 3));
     assert_eq(|_|"only row 0 row0", Buffer::get_cell(0, 0, f4.@buffer).@ch, "a");;
     assert_eq(|_|"only row 0 row1", Buffer::get_cell(0, 1, f4.@buffer).@ch, " ");;
+    // cursor field starts unset.
+    let fc0 = Frame::new(Rect::make(0, 0, 10, 3));
+    assert_eq(|_|"new cursor none", fc0.@cursor.is_none, true);;
+    // set_cursor round-trips (col, row).
+    let fc1 = fc0.Yaynu.Tui.Frame::set_cursor(5, 2);
+    let (c1, r1) = fc1.@cursor.as_some;
+    assert_eq(|_|"set_cursor col", c1, 5);;
+    assert_eq(|_|"set_cursor row", r1, 2);;
+    // Chained set_cursor keeps the last value (last writer wins).
+    let fc2 = fc0.Yaynu.Tui.Frame::set_cursor(1, 1).Yaynu.Tui.Frame::set_cursor(7, 3);
+    let (c2, r2) = fc2.@cursor.as_some;
+    assert_eq(|_|"chain cursor col", c2, 7);;
+    assert_eq(|_|"chain cursor row", r2, 3);;
     pure()
 );

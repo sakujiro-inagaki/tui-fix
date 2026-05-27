@@ -14,6 +14,7 @@ import InputTest;
 import TabsTest;
 import SpinnerTest;
 import ProgressTest;
+import EventTest;
 
 test : IO ();
 test = (
@@ -30,5 +31,6 @@ test = (
     TabsTest::run;;
     SpinnerTest::run;;
     ProgressTest::run;;
+    EventTest::run;;
     println("All tests passed.")
 );

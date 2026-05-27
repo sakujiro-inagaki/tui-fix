@@ -1,0 +1,54 @@
+module EventTest;
+
+import Yaynu.Tui;
+import Yaynu.Term.Key;
+
+run : IO ();
+run = (
+    // 2.2.1 ASCII bytes "abc" → three Key::char keys.
+    let bytes_abc : Array U8 = [97_U8, 98_U8, 99_U8];
+    let keys_abc = _drain_keys(bytes_abc);
+    assert_eq(|_|"abc len", keys_abc.get_size, 3);;
+    assert_eq(|_|"abc[0]", keys_abc.@(0).as_char, "a");;
+    assert_eq(|_|"abc[1]", keys_abc.@(1).as_char, "b");;
+    assert_eq(|_|"abc[2]", keys_abc.@(2).as_char, "c");;
+
+    // 2.2.2 UTF-8 bytes for "こんにちは" → five Key::char keys.
+    // こ = E3 81 93, ん = E3 82 93, に = E3 81 AB, ち = E3 81 A1, は = E3 81 AF
+    let bytes_konn : Array U8 = [
+        0xE3_U8, 0x81_U8, 0x93_U8,  // こ
+        0xE3_U8, 0x82_U8, 0x93_U8,  // ん
+        0xE3_U8, 0x81_U8, 0xAB_U8,  // に
+        0xE3_U8, 0x81_U8, 0xA1_U8,  // ち
+        0xE3_U8, 0x81_U8, 0xAF_U8   // は
+    ];
+    let keys_konn = _drain_keys(bytes_konn);
+    assert_eq(|_|"konn len", keys_konn.get_size, 5);;
+    assert_eq(|_|"konn[0]", keys_konn.@(0).as_char, "こ");;
+    assert_eq(|_|"konn[1]", keys_konn.@(1).as_char, "ん");;
+    assert_eq(|_|"konn[2]", keys_konn.@(2).as_char, "に");;
+    assert_eq(|_|"konn[3]", keys_konn.@(3).as_char, "ち");;
+    assert_eq(|_|"konn[4]", keys_konn.@(4).as_char, "は");;
+
+    // 2.2.3 Mixed bytes: 'a' + あ(E3 81 82) + Ctrl-B(0x02) + arrow-up (ESC [ A).
+    let bytes_mix : Array U8 = [
+        97_U8,                         // 'a'
+        0xE3_U8, 0x81_U8, 0x82_U8,     // あ
+        0x02_U8,                       // Ctrl-B
+        27_U8, 91_U8, 65_U8            // ESC [ A → arrow_up
+    ];
+    let keys_mix = _drain_keys(bytes_mix);
+    assert_eq(|_|"mix len", keys_mix.get_size, 4);;
+    assert_eq(|_|"mix[0] char a", keys_mix.@(0).as_char, "a");;
+    assert_eq(|_|"mix[1] char あ", keys_mix.@(1).as_char, "あ");;
+    assert_eq(|_|"mix[2] ctrl b", keys_mix.@(2).as_ctrl, "b");;
+    assert_eq(|_|"mix[3] arrow_up", keys_mix.@(3).is_arrow_up, true);;
+
+    // 2.2.4 Bytes that end mid-UTF-8: "あ" + 0xE3 → one char and tail dropped.
+    let bytes_partial : Array U8 = [0xE3_U8, 0x81_U8, 0x82_U8, 0xE3_U8];
+    let keys_partial = _drain_keys(bytes_partial);
+    assert_eq(|_|"partial len", keys_partial.get_size, 1);;
+    assert_eq(|_|"partial[0]", keys_partial.@(0).as_char, "あ");;
+
+    pure()
+);
