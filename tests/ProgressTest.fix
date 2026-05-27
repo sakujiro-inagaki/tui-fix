@@ -1,0 +1,30 @@
+module ProgressTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Widget.Progress;
+
+run : IO ();
+run = (
+    let f = Frame::new(Rect::make(0, 0, 40, 1));
+    // 50% of 10 -> 5 fill + 5 empty.
+    let p_half = Progress::new.with_value(0.5).with_width(10);
+    let f_half = f.render_progress(p_half, Rect::make(0, 0, 40, 1));
+    assert_eq(|_|"50% fill[0]", Buffer::get_cell(0, 0, f_half.@buffer).@ch, "█");;
+    assert_eq(|_|"50% fill[4]", Buffer::get_cell(4, 0, f_half.@buffer).@ch, "█");;
+    assert_eq(|_|"50% empty[5]", Buffer::get_cell(5, 0, f_half.@buffer).@ch, "░");;
+    assert_eq(|_|"50% empty[9]", Buffer::get_cell(9, 0, f_half.@buffer).@ch, "░");;
+    // Above 1.0 clamps.
+    let p_over = Progress::new.with_value(2.0).with_width(5);
+    let f_over = f.render_progress(p_over, Rect::make(0, 0, 40, 1));
+    assert_eq(|_|"clamp[0]", Buffer::get_cell(0, 0, f_over.@buffer).@ch, "█");;
+    assert_eq(|_|"clamp[4]", Buffer::get_cell(4, 0, f_over.@buffer).@ch, "█");;
+    assert_eq(|_|"clamp[5] beyond fill is space", Buffer::get_cell(5, 0, f_over.@buffer).@ch, " ");;
+    // Indeterminate tick.
+    let p_ind = Progress::indeterminate(10);
+    let p_ind1 = p_ind.tick;
+    assert_eq(|_|"indet tick", p_ind1.@frame_index, 1);;
+    pure()
+);

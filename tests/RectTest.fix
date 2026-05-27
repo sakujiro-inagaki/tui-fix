@@ -1,0 +1,43 @@
+module RectTest;
+
+import Yaynu.Tui.Rect;
+
+run : IO ();
+run = (
+    // make stores fields verbatim.
+    let r = Rect::make(2, 3, 10, 5);
+    assert_eq(|_|"x", r.@x, 2);;
+    assert_eq(|_|"y", r.@y, 3);;
+    assert_eq(|_|"width", r.@width, 10);;
+    assert_eq(|_|"height", r.@height, 5);;
+    // is_empty
+    assert_eq(|_|"empty zero w", Rect::make(0, 0, 0, 5).is_empty, true);;
+    assert_eq(|_|"empty neg h", Rect::make(0, 0, 5, -1).is_empty, true);;
+    assert_eq(|_|"non-empty", Rect::make(0, 0, 1, 1).is_empty, false);;
+    // split_horizontal: all fixed.
+    let parts = Rect::split_horizontal([Constraint::fixed(5), Constraint::fixed(10), Constraint::fixed(15)], Rect::make(0, 0, 30, 1));
+    assert_eq(|_|"split fixed len", parts.get_size, 3);;
+    assert_eq(|_|"split fixed widths", [parts.@(0).@width, parts.@(1).@width, parts.@(2).@width], [5, 10, 15]);;
+    assert_eq(|_|"split fixed xs", [parts.@(0).@x, parts.@(1).@x, parts.@(2).@x], [0, 5, 15]);;
+    // fill weights.
+    let parts2 = Rect::split_horizontal([Constraint::fixed(4), Constraint::fill(1), Constraint::fill(3)], Rect::make(0, 0, 20, 1));
+    assert_eq(|_|"fill widths", [parts2.@(0).@width, parts2.@(1).@width, parts2.@(2).@width], [4, 4, 12]);;
+    // percentages sum exactly to parent width (no fill, but
+    // largest-remainder kicks in among the percentage entries).
+    let parts3 = Rect::split_horizontal([Constraint::percentage(33), Constraint::percentage(33), Constraint::percentage(34)], Rect::make(0, 0, 10, 1));
+    let total3 = parts3.@(0).@width + parts3.@(1).@width + parts3.@(2).@width;
+    assert_eq(|_|"percentage total", total3, 10);;
+    // Empty constraints.
+    let empty_parts = Rect::split_horizontal([], Rect::make(0, 0, 10, 1));
+    assert_eq(|_|"empty constraints", empty_parts.get_size, 0);;
+    // Overflow shrinks from end.
+    let parts4 = Rect::split_horizontal([Constraint::fixed(6), Constraint::fixed(6), Constraint::fixed(6)], Rect::make(0, 0, 10, 1));
+    let total4 = parts4.@(0).@width + parts4.@(1).@width + parts4.@(2).@width;
+    assert_eq(|_|"overflow total fits", total4, 10);;
+    assert_eq(|_|"overflow first untouched", parts4.@(0).@width, 6);;
+    // split_vertical.
+    let v = Rect::split_vertical([Constraint::fixed(1), Constraint::fill(1), Constraint::fixed(1)], Rect::make(0, 0, 80, 24));
+    assert_eq(|_|"vsplit heights", [v.@(0).@height, v.@(1).@height, v.@(2).@height], [1, 22, 1]);;
+    assert_eq(|_|"vsplit ys", [v.@(0).@y, v.@(1).@y, v.@(2).@y], [0, 1, 23]);;
+    pure()
+);

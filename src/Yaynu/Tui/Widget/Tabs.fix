@@ -1,0 +1,85 @@
+// Tabs widget: a horizontal title bar with a selected tab.
+module Yaynu.Tui.Widget.Tabs;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+
+type Tabs = box struct {
+    titles         : Array String,
+    selected       : I64,
+    style          : Style,
+    selected_style : Style,
+    divider        : String
+};
+
+namespace Tabs {
+
+    new : Array String -> Tabs;
+    new = |ts| Tabs {
+        titles         : ts,
+        selected       : 0,
+        style          : Style::default,
+        selected_style : Style::default.set_reverse(true),
+        divider        : " | "
+    };
+
+    with_selected : I64 -> Tabs -> Tabs;
+    with_selected = |i, t| t.set_selected(i);
+
+    next : Tabs -> Tabs;
+    next = |t| (
+        let n = t.@titles.get_size;
+        if n == 0 { t } else {
+            let s = t.@selected + 1;
+            t.set_selected(if s >= n { 0 } else { s })
+        }
+    );
+
+    prev : Tabs -> Tabs;
+    prev = |t| (
+        let n = t.@titles.get_size;
+        if n == 0 { t } else {
+            let s = t.@selected - 1;
+            t.set_selected(if s < 0 { n - 1 } else { s })
+        }
+    );
+}
+
+namespace Frame {
+
+    render_tabs : Tabs -> Rect -> Frame -> Frame;
+    render_tabs = |t, rect, frame| (
+        if rect.is_empty { frame };
+        let n = t.@titles.get_size;
+        let divider = t.@divider;
+        // Build a (string, is_selected) sequence then render.
+        let (f, _) = loop((frame, rect.@x, 0), |(f, x, i)| (
+            if i >= n { break $ (f, x) };
+            if x >= rect.@x + rect.@width { break $ (f, x) };
+            // Divider between tabs.
+            let (f1, x1) = if i > 0 {
+                let remaining = rect.@x + rect.@width - x;
+                let div_trunc = Width::truncate(remaining, divider);
+                let dw = Width::string_width(div_trunc);
+                (
+                    f.mod_buffer(|buf| Buffer::set_string(x, rect.@y, div_trunc, t.@style, buf)),
+                    x + dw
+                )
+            } else { (f, x) };
+            if x1 >= rect.@x + rect.@width { break $ (f1, x1) };
+            let remaining = rect.@x + rect.@width - x1;
+            let title = t.@titles.@(i);
+            let title_trunc = Width::truncate(remaining, title);
+            let style = if i == t.@selected { t.@selected_style } else { t.@style };
+            let tw = Width::string_width(title_trunc);
+            let f2 = f1.mod_buffer(|buf|
+                Buffer::set_string(x1, rect.@y, title_trunc, style, buf)
+            );
+            continue $ (f2, x1 + tw, i + 1)
+        ));
+        f
+    );
+}

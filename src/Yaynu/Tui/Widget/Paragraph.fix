@@ -1,0 +1,140 @@
+// Paragraph widget: multi-line text with selectable wrap mode.
+module Yaynu.Tui.Widget.Paragraph;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+import Yaynu.Tui.Width.Grapheme;
+
+type WrapMode = box union {
+    no_wrap : (),
+    word    : (),
+    char    : ()
+};
+
+type Paragraph = box struct {
+    text   : String,
+    style  : Style,
+    wrap   : WrapMode,
+    scroll : I64
+};
+
+namespace Paragraph {
+
+    new : String -> Paragraph;
+    new = |t| Paragraph {
+        text   : t,
+        style  : Style::default,
+        wrap   : WrapMode::no_wrap(),
+        scroll : 0
+    };
+
+    with_wrap : WrapMode -> Paragraph -> Paragraph;
+    with_wrap = |m, p| p.set_wrap(m);
+
+    with_scroll : I64 -> Paragraph -> Paragraph;
+    with_scroll = |n, p| p.set_scroll(n);
+
+    with_style : Style -> Paragraph -> Paragraph;
+    with_style = |s, p| p.set_style(s);
+}
+
+namespace Frame {
+
+    render_paragraph : Paragraph -> Rect -> Frame -> Frame;
+    render_paragraph = |p, rect, frame| (
+        if rect.is_empty { frame };
+        let lines = _split_lines(p.@text);
+        let wrapped = lines.to_iter.fold([], |line, acc|
+            acc.append(_wrap_line(line, rect.@width, p.@wrap))
+        );
+        let scroll = if p.@scroll < 0 { 0 } else { p.@scroll };
+        let visible = wrapped.get_size - scroll;
+        let n_rows = if visible < 0 { 0 } else if visible > rect.@height { rect.@height } else { visible };
+        loop((frame, 0), |(f, i)| (
+            if i >= n_rows { break $ f };
+            let row = wrapped.@(scroll + i);
+            let f2 = f.mod_buffer(|buf|
+                Buffer::set_string(rect.@x, rect.@y + i, row, p.@style, buf)
+            );
+            continue $ (f2, i + 1)
+        ))
+    );
+}
+
+_split_lines : String -> Array String;
+_split_lines = |s| s.split("\n").to_array;
+
+// Wrap one logical line into zero or more physical rows. Empty input
+// becomes one empty row so blank lines remain visible.
+_wrap_line : String -> I64 -> WrapMode -> Array String;
+_wrap_line = |line, width, mode| (
+    if width <= 0 { [] };
+    let clusters = Grapheme::split_clusters(line);
+    if clusters.get_size == 0 { [""] };
+    match mode {
+        no_wrap() => [Width::truncate(width, line)],
+        char()    => _wrap_char(clusters, width),
+        word()    => _wrap_word(clusters, width)
+    }
+);
+
+_wrap_char : Array String -> I64 -> Array String;
+_wrap_char = |clusters, width| (
+    let n = clusters.get_size;
+    let (rows, current, used, _) = loop(([], "", 0, 0), |(rows, cur, used, i)| (
+        if i >= n { break $ (rows, cur, used, i) };
+        let c = clusters.@(i);
+        let w = Width::char_width(c);
+        if used + w > width {
+            continue $ (rows.push_back(cur), c, w, i + 1)
+        } else {
+            continue $ (rows, cur + c, used + w, i + 1)
+        }
+    ));
+    rows.push_back(current)
+);
+
+_wrap_word : Array String -> I64 -> Array String;
+_wrap_word = |clusters, width| (
+    let n = clusters.get_size;
+    // Build rows by greedily appending clusters; on overflow, snap
+    // back to the last space if any, otherwise fall back to char wrap.
+    let (rows, current, used, last_space, _) =
+        loop(([], "", 0, -1, 0), |(rows, cur, used, last_sp, i)| (
+            if i >= n { break $ (rows, cur, used, last_sp, i) };
+            let c = clusters.@(i);
+            let w = Width::char_width(c);
+            if used + w > width {
+                if last_sp >= 0 {
+                    // Split at last_sp: rows gets cur[..last_sp], cur becomes cur[last_sp+1..]
+                    let head = _cluster_join(cur, 0, last_sp);
+                    let tail = _cluster_join(cur, last_sp + 1, _cluster_count(cur)) + c;
+                    let new_used = Width::string_width(tail);
+                    continue $ (rows.push_back(head), tail, new_used, -1, i + 1)
+                } else {
+                    continue $ (rows.push_back(cur), c, w, -1, i + 1)
+                }
+            } else {
+                let is_sp = c == " ";
+                let new_last_sp = if is_sp { _cluster_count(cur) } else { last_sp };
+                continue $ (rows, cur + c, used + w, new_last_sp, i + 1)
+            }
+        ));
+    rows.push_back(current)
+);
+
+// Concatenate clusters [start, end) of a cluster-joined string.
+_cluster_join : String -> I64 -> I64 -> String;
+_cluster_join = |s, start, end_excl| (
+    let cs = Grapheme::split_clusters(s);
+    if start >= cs.get_size { "" } else {
+        let end_clamped = if end_excl > cs.get_size { cs.get_size } else { end_excl };
+        Array::from_map(end_clamped - start, |i| cs.@(start + i)).to_iter.concat_iter
+    }
+);
+
+_cluster_count : String -> I64;
+_cluster_count = |s| Grapheme::split_clusters(s).get_size;

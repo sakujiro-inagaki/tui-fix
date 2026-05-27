@@ -1,0 +1,172 @@
+// Top-level facade for the Yaynu.Tui library.
+//
+// Imports all submodules and re-exports the public surface required by
+// the spec: Frame, run, Event, UpdateResult, TuiApp, common widget render
+// functions, layout primitives, styling, and the width API.
+//
+// Namespace note: every module lives under `Yaynu.Tui.*` for v0.1.
+// A future change will promote this to top-level `Tui.*` via a
+// mechanical rename.
+module Yaynu.Tui;
+
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Diff;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Width;
+import Yaynu.Tui.Widget.Border;
+import Yaynu.Tui.Widget.Paragraph;
+import Yaynu.Tui.Widget.List;
+import Yaynu.Tui.Widget.Input;
+import Yaynu.Tui.Widget.Tabs;
+import Yaynu.Tui.Widget.Spinner;
+import Yaynu.Tui.Widget.Progress;
+
+import Yaynu.Term.Ansi;
+import Yaynu.Term.Input;
+import Yaynu.Term.Key;
+import Yaynu.Term.Mode;
+import Yaynu.Term.Output;
+import Yaynu.Term.Size;
+
+// Library version string.
+version : String;
+version = "0.1.0";
+
+// ---- TuiApp run loop ----
+//
+// Lifecycle:
+//   1. Snapshot termios, enter raw-mode-no-sig (so Ctrl+C arrives as a
+//      byte instead of SIGINT). Without this, a user hitting Ctrl+C
+//      kills the process before we can restore the screen.
+//   2. Install the SIGWINCH handler so terminal-resize events can be
+//      observed across iterations.
+//   3. Switch to the alternate screen + hide the cursor.
+//   4. Run the user's view/update loop until `UpdateResult::quit` or
+//      Ctrl+C.
+//   5. ALWAYS (success or failure) emit the teardown sequences and
+//      restore the saved termios snapshot before returning.
+
+run : [s : TuiApp] s -> IOFail ();
+run = |initial_state| (
+    // Use raw-no-sig: Ctrl+C is delivered as the byte 0x03 so we can
+    // shut down cleanly. With ISIG enabled (the default `enter_raw`),
+    // SIGINT bypasses our cleanup and leaves the terminal in alt-screen
+    // + cursor-hidden state.
+    let mode = *Yaynu.Term.Mode::enter_raw_no_sig;
+    Yaynu.Term.Size::install_resize_handler.lift;;
+    Yaynu.Term.Output::write(Yaynu.Term.Ansi::enter_alternate_screen);;
+    Yaynu.Term.Output::write(Yaynu.Term.Ansi::clear_screen);;
+    Yaynu.Term.Output::write(Yaynu.Term.Ansi::hide_cursor);;
+    let body_res = *(_run_loop(initial_state).to_result).lift;
+    // Best-effort teardown. We must restore the cursor + main screen
+    // even if some part of teardown fails so the user's terminal does
+    // not stay broken.
+    let _ = *(Yaynu.Term.Output::write(Yaynu.Term.Ansi::show_cursor).to_result).lift;
+    let _ = *(Yaynu.Term.Output::write(Yaynu.Term.Ansi::leave_alternate_screen).to_result).lift;
+    let _ = *(Yaynu.Term.Mode::TermMode::restore(mode).to_result).lift;
+    match body_res {
+        ok(v)  => pure(v),
+        err(e) => throw(e)
+    }
+);
+
+_run_loop : [s : TuiApp] s -> IOFail ();
+_run_loop = |state| (
+    let sz = *Yaynu.Term.Size::TermSize::get;
+    let initial_rect = Rect::make(0, 0, sz.@cols, sz.@rows);
+    let initial_buf = Buffer::empty(sz.@cols, sz.@rows);
+    _loop(state, initial_buf, initial_rect)
+);
+
+_loop : [s : TuiApp] s -> Buffer -> Rect -> IOFail ();
+_loop = |state, prev_buf, rect| (
+    let frame = Yaynu.Tui.Frame::Frame::new(rect);
+    let frame = TuiApp::view(state, frame);
+    let next_buf = frame.@buffer;
+    let diff_str = Diff::diff_to_ansi(prev_buf, next_buf);
+    Yaynu.Term.Output::write(diff_str);;
+    let tick_ms = TuiApp::tick_rate(state);
+    let timeout : I64 = match tick_ms {
+        none() => 1000,
+        some(n) => n
+    };
+    let byte_opt = *Yaynu.Term.Input::read_byte_timeout(timeout);
+    let resized = *Yaynu.Term.Size::check_resized.lift;
+    // Build the event:
+    //   - timeout + resize  → Event::resize with the new size
+    //   - timeout alone     → Event::tick
+    //   - byte arrived      → drain the rest non-blocking and parse
+    let event : Event = *(
+        match byte_opt {
+            none() => (
+                if resized {
+                    let new_sz = *Yaynu.Term.Size::TermSize::get;
+                    pure $ Event::resize((new_sz.@rows, new_sz.@cols))
+                } else {
+                    pure $ Event::tick(())
+                }
+            ),
+            some(b) => _read_key_event(b)
+        }
+    );
+    // Force-quit on Ctrl+C even if the user's `update` would otherwise
+    // ignore it. This is the standard TUI convention and protects us
+    // from apps that forget to wire it.
+    let force_quit = match event {
+        key(k) => (match k { ctrl(c) => c == "c", _ => false }),
+        _ => false
+    };
+    if force_quit { pure() };
+    let result = TuiApp::update(event, state);
+    match result {
+        quit() => pure(),
+        continue(new_state) => (
+            // After any event, check for an asynchronous resize and
+            // resync the rect / previous buffer if needed.
+            let resized_late = *Yaynu.Term.Size::check_resized.lift;
+            let needs_resync = resized_late || (match event { resize(_) => true, _ => false });
+            let (prev_buf2, rect2) = *(
+                if needs_resync {
+                    let new_sz = *Yaynu.Term.Size::TermSize::get;
+                    let new_rect = Rect::make(0, 0, new_sz.@cols, new_sz.@rows);
+                    pure $ (Buffer::empty(new_sz.@cols, new_sz.@rows), new_rect)
+                } else {
+                    pure $ (next_buf, rect)
+                }
+            );
+            _loop(new_state, prev_buf2, rect2)
+        )
+    }
+);
+
+// Drain everything currently available on stdin (best-effort) and
+// parse the resulting buffer as a Key. A bare ESC with no follow-up
+// bytes is interpreted as `Key::escape()` — without this, a lone Esc
+// press would be reported as `Key::unknown([0x1B])` because the CSI
+// sub-parser leaves it as `incomplete`.
+_read_key_event : U8 -> IOFail Event;
+_read_key_event = |first_byte| (
+    let rest = *Yaynu.Term.Input::read_available;
+    let bytes : Array U8 = Array::from_map(1 + rest.get_size, |i|
+        if i == 0 { first_byte } else { rest.@(i - 1) }
+    );
+    let r = Yaynu.Term.Key::parse(bytes);
+    let k = match r {
+        complete((k, _)) => k,
+        incomplete() => (
+            // Bare ESC sat in the buffer with nothing else following.
+            // Treat it as Key::escape so the app can quit on it.
+            if bytes.get_size > 0 && bytes.@(0) == 27_U8 {
+                Yaynu.Term.Key::Key::escape()
+            } else {
+                Yaynu.Term.Key::Key::unknown(bytes)
+            }
+        ),
+        invalid(_) => Yaynu.Term.Key::Key::unknown(bytes)
+    };
+    pure $ Event::key(k)
+);

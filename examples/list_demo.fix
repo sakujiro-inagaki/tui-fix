@@ -1,0 +1,57 @@
+// list_demo.fix — 20-item list, arrow keys move selection, Enter
+// captures the selection and quits.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.List;
+import Yaynu.Term.Key;
+
+type Demo = box struct { list : List String, picked : Option String };
+
+impl Demo : TuiApp {
+    initial = (
+        let items : Array (ListItem String) = Iterator::range(0, 20).map(|i|
+            let s = "item " + i.to_string;
+            ListItem::new(s, s)
+        ).to_array;
+        Demo {
+            list : List::new(items).with_selected(0).with_highlight_symbol("> "),
+            picked : Option::none()
+        }
+    );
+    view = |s, frame| (
+        let r = frame.@size;
+        let title_rect = Rect::make(r.@x, r.@y, r.@width, 1);
+        let list_rect = Rect::make(r.@x, r.@y + 2, r.@width, r.@height - 2);
+        frame
+            .render_text("List demo — arrows move, Enter picks, Esc quits", Style::default, title_rect)
+            .render_list(s.@list, list_rect)
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    enter() => UpdateResult::continue(s.set_picked(s.@list.selected_value)),
+                    _ => UpdateResult::continue(s.set_list(s.@list.handle_key(k)))
+                }
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);

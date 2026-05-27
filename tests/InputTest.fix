@@ -1,0 +1,34 @@
+module InputTest;
+
+import Yaynu.Tui.Widget.Input;
+import Yaynu.Term.Key;
+
+run : IO ();
+run = (
+    // New input is empty.
+    let i = Input::new;
+    assert_eq(|_|"new text empty", i.text, "");;
+    assert_eq(|_|"new cursor 0", i.@cursor, 0);;
+    assert_eq(|_|"new not multi", i.@multi_line, false);;
+    // Insert char.
+    let i1 = i.handle_key(Key::char("a"));
+    assert_eq(|_|"insert a text", i1.text, "a");;
+    assert_eq(|_|"insert a cursor", i1.@cursor, 1);;
+    // Backspace on cafe + combining-acute.
+    let combining_acute = String::_unsafe_from_c_str([0xCC_U8, 0x81_U8, 0_U8]);
+    let i2 = Input::new.handle_key(Key::char("c")).handle_key(Key::char("a")).handle_key(Key::char("f")).handle_key(Key::char("e" + combining_acute));
+    let i3 = i2.handle_key(Key::backspace());
+    assert_eq(|_|"backspace cluster text", i3.text, "caf");;
+    assert_eq(|_|"backspace cluster cursor", i3.@cursor, 3);;
+    // Enter single-line.
+    let i_es = Input::new.handle_key(Key::char("x")).handle_key(Key::enter());
+    assert_eq(|_|"single enter text", i_es.text, "x");;
+    // Enter multi-line.
+    let i_ml = Input::new.with_multi_line(true).handle_key(Key::char("a")).handle_key(Key::char("b")).handle_key(Key::char("c")).handle_key(Key::enter());
+    assert_eq(|_|"multi enter text", i_ml.text, "abc\n");;
+    // max_length blocks.
+    let i_max : Input = Input::new.set_max_length(Option::some(2)).handle_key(Key::char("a")).handle_key(Key::char("b"));
+    let i_max2 = i_max.handle_key(Key::char("c"));
+    assert_eq(|_|"max length blocks", i_max2.text, "ab");;
+    pure()
+);

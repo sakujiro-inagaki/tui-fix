@@ -1,0 +1,42 @@
+// hello_tui.fix — minimal "Hello, TUI" smoke test.
+//
+// Run with `fix run -f examples/hello_tui.fix`. Press Esc to quit.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Style;
+import Yaynu.Term.Key;
+
+type AppState = box struct { _placeholder : () };
+
+impl AppState : TuiApp {
+    initial = AppState { _placeholder : () };
+    view = |_, frame| (
+        let r = frame.@size;
+        frame.render_text("Hello, TUI! (press Esc to quit)", Style::default, r)
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    _        => UpdateResult::continue(s)
+                }
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+main : IO ();
+main = (
+    let initial_state : AppState = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => println("bye"),
+        err(e) => println("error: " + e)
+    }
+);

@@ -1,0 +1,44 @@
+module ParagraphTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.Paragraph;
+
+run : IO ();
+run = (
+    let f = Frame::new(Rect::make(0, 0, 20, 5));
+    // no_wrap truncates.
+    let p = Paragraph::new("Hello, World").with_wrap(WrapMode::no_wrap());
+    let f1 = f.render_paragraph(p, Rect::make(0, 0, 5, 3));
+    assert_eq(|_|"no_wrap row0 H", Buffer::get_cell(0, 0, f1.@buffer).@ch, "H");;
+    assert_eq(|_|"no_wrap row0 o", Buffer::get_cell(4, 0, f1.@buffer).@ch, "o");;
+    assert_eq(|_|"no_wrap row1 blank", Buffer::get_cell(0, 1, f1.@buffer).@ch, " ");;
+    // word wrap.
+    let p2 = Paragraph::new("the quick brown fox").with_wrap(WrapMode::word());
+    let f2 = f.render_paragraph(p2, Rect::make(0, 0, 10, 3));
+    assert_eq(|_|"word row0 t", Buffer::get_cell(0, 0, f2.@buffer).@ch, "t");;
+    assert_eq(|_|"word row0 k", Buffer::get_cell(8, 0, f2.@buffer).@ch, "k");;
+    assert_eq(|_|"word row1 b", Buffer::get_cell(0, 1, f2.@buffer).@ch, "b");;
+    // char wrap.
+    let p3 = Paragraph::new("abcdefghij").with_wrap(WrapMode::char());
+    let f3 = f.render_paragraph(p3, Rect::make(0, 0, 4, 3));
+    assert_eq(|_|"char row0 a", Buffer::get_cell(0, 0, f3.@buffer).@ch, "a");;
+    assert_eq(|_|"char row0 d", Buffer::get_cell(3, 0, f3.@buffer).@ch, "d");;
+    assert_eq(|_|"char row1 e", Buffer::get_cell(0, 1, f3.@buffer).@ch, "e");;
+    assert_eq(|_|"char row2 i", Buffer::get_cell(0, 2, f3.@buffer).@ch, "i");;
+    // explicit newline.
+    let p4 = Paragraph::new("a\nb");
+    let f4 = f.render_paragraph(p4, Rect::make(0, 0, 5, 3));
+    assert_eq(|_|"nl row0", Buffer::get_cell(0, 0, f4.@buffer).@ch, "a");;
+    assert_eq(|_|"nl row1", Buffer::get_cell(0, 1, f4.@buffer).@ch, "b");;
+    // scroll
+    let p5 = Paragraph::new("a\nb\nc\nd\ne").with_scroll(2);
+    let f5 = f.render_paragraph(p5, Rect::make(0, 0, 5, 3));
+    assert_eq(|_|"scroll row0 c", Buffer::get_cell(0, 0, f5.@buffer).@ch, "c");;
+    assert_eq(|_|"scroll row1 d", Buffer::get_cell(0, 1, f5.@buffer).@ch, "d");;
+    assert_eq(|_|"scroll row2 e", Buffer::get_cell(0, 2, f5.@buffer).@ch, "e");;
+    pure()
+);

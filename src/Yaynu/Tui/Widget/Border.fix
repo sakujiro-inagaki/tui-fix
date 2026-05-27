@@ -1,0 +1,164 @@
+// Border widget: draws box-drawing glyphs around a Rect and (when
+// enabled) a title on the top edge.
+module Yaynu.Tui.Widget.Border;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+
+type BorderSides = struct {
+    top    : Bool,
+    right  : Bool,
+    bottom : Bool,
+    left   : Bool
+};
+
+type BorderType = box union {
+    plain   : (),
+    rounded : (),
+    double  : (),
+    thick   : ()
+};
+
+type Alignment = box union {
+    left   : (),
+    center : (),
+    right  : ()
+};
+
+type Border = box struct {
+    style           : Style,
+    sides           : BorderSides,
+    border_type     : BorderType,
+    title           : Option String,
+    title_alignment : Alignment
+};
+
+namespace Border {
+
+    all : Border;
+    all = Border {
+        style           : Style::default,
+        sides           : BorderSides { top : true, right : true, bottom : true, left : true },
+        border_type     : BorderType::plain(),
+        title           : Option::none(),
+        title_alignment : Alignment::left()
+    };
+
+    none : Border;
+    none = Border {
+        style           : Style::default,
+        sides           : BorderSides { top : false, right : false, bottom : false, left : false },
+        border_type     : BorderType::plain(),
+        title           : Option::none(),
+        title_alignment : Alignment::left()
+    };
+
+    with_title : String -> Border -> Border;
+    with_title = |t, b| b.set_title(Option::some(t));
+
+    // Return the rect inside the border, reduced by 1 cell on each
+    // enabled side.
+    inner : Rect -> Border -> Rect;
+    inner = |r, b| (
+        let sides = b.@sides;
+        let dl = if sides.@left   { 1 } else { 0 };
+        let dt = if sides.@top    { 1 } else { 0 };
+        let dr = if sides.@right  { 1 } else { 0 };
+        let db = if sides.@bottom { 1 } else { 0 };
+        let new_w = r.@width  - dl - dr;
+        let new_h = r.@height - dt - db;
+        Rect::make(r.@x + dl, r.@y + dt, new_w, new_h)
+    );
+}
+
+// Glyphs for a border type: (top_left, top_right, bottom_left, bottom_right, horizontal, vertical).
+_glyphs : BorderType -> (String, String, String, String, String, String);
+_glyphs = |bt| (
+    match bt {
+        plain()   => ("┌", "┐", "└", "┘", "─", "│"),
+        rounded() => ("╭", "╮", "╰", "╯", "─", "│"),
+        double()  => ("╔", "╗", "╚", "╝", "═", "║"),
+        thick()   => ("┏", "┓", "┗", "┛", "━", "┃")
+    }
+);
+
+namespace Frame {
+
+    render_border : Border -> Rect -> Frame -> Frame;
+    render_border = |b, r, frame| (
+        if r.is_empty { frame };
+        let (tl, tr, bl, br, h, v) = _glyphs(b.@border_type);
+        let style = b.@style;
+        let x0 = r.@x;
+        let y0 = r.@y;
+        let x1 = r.@x + r.@width - 1;
+        let y1 = r.@y + r.@height - 1;
+        let sides = b.@sides;
+
+        // Top edge.
+        let frame = if sides.@top {
+            loop((frame, x0), |(f, x)| (
+                if x > x1 { break $ f };
+                continue $ (f.mod_buffer(|buf| Buffer::set_cell(x, y0, Cell { ch : h, style : style }, buf)), x + 1)
+            ))
+        } else { frame };
+        // Bottom edge.
+        let frame = if sides.@bottom && y1 > y0 {
+            loop((frame, x0), |(f, x)| (
+                if x > x1 { break $ f };
+                continue $ (f.mod_buffer(|buf| Buffer::set_cell(x, y1, Cell { ch : h, style : style }, buf)), x + 1)
+            ))
+        } else { frame };
+        // Left edge.
+        let frame = if sides.@left {
+            loop((frame, y0), |(f, y)| (
+                if y > y1 { break $ f };
+                continue $ (f.mod_buffer(|buf| Buffer::set_cell(x0, y, Cell { ch : v, style : style }, buf)), y + 1)
+            ))
+        } else { frame };
+        // Right edge.
+        let frame = if sides.@right && x1 > x0 {
+            loop((frame, y0), |(f, y)| (
+                if y > y1 { break $ f };
+                continue $ (f.mod_buffer(|buf| Buffer::set_cell(x1, y, Cell { ch : v, style : style }, buf)), y + 1)
+            ))
+        } else { frame };
+        // Corners (always drawn when both adjacent sides are present).
+        let frame = if sides.@top && sides.@left {
+            frame.mod_buffer(|buf| Buffer::set_cell(x0, y0, Cell { ch : tl, style : style }, buf))
+        } else { frame };
+        let frame = if sides.@top && sides.@right && x1 > x0 {
+            frame.mod_buffer(|buf| Buffer::set_cell(x1, y0, Cell { ch : tr, style : style }, buf))
+        } else { frame };
+        let frame = if sides.@bottom && sides.@left && y1 > y0 {
+            frame.mod_buffer(|buf| Buffer::set_cell(x0, y1, Cell { ch : bl, style : style }, buf))
+        } else { frame };
+        let frame = if sides.@bottom && sides.@right && y1 > y0 && x1 > x0 {
+            frame.mod_buffer(|buf| Buffer::set_cell(x1, y1, Cell { ch : br, style : style }, buf))
+        } else { frame };
+        // Title on top edge.
+        let frame = match b.@title {
+            none() => frame,
+            some(t) => (
+                if !sides.@top { frame } else {
+                    let avail = r.@width - 2;
+                    if avail <= 0 { frame } else {
+                        let trunc = Width::truncate(avail, t);
+                        let tw = Width::string_width(trunc);
+                        let tx = match b.@title_alignment {
+                            left()   => x0 + 1,
+                            center() => x0 + 1 + ((avail - tw) / 2),
+                            right()  => x1 - 1 - tw + 1
+                        };
+                        frame.mod_buffer(|buf| Buffer::set_string(tx, y0, trunc, style, buf))
+                    }
+                }
+            )
+        };
+        frame
+    );
+}

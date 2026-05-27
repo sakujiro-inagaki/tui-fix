@@ -1,0 +1,34 @@
+// Top-level test harness: runs every per-module test suite.
+module Test;
+
+import StyleTest;
+import RectTest;
+import WidthTest;
+import BufferTest;
+import FrameTest;
+import DiffTest;
+import BorderTest;
+import ParagraphTest;
+import ListTest;
+import InputTest;
+import TabsTest;
+import SpinnerTest;
+import ProgressTest;
+
+test : IO ();
+test = (
+    StyleTest::run;;
+    RectTest::run;;
+    WidthTest::run;;
+    BufferTest::run;;
+    FrameTest::run;;
+    DiffTest::run;;
+    BorderTest::run;;
+    ParagraphTest::run;;
+    ListTest::run;;
+    InputTest::run;;
+    TabsTest::run;;
+    SpinnerTest::run;;
+    ProgressTest::run;;
+    println("All tests passed.")
+);

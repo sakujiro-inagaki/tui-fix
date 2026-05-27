@@ -1,0 +1,96 @@
+// Progress bar widget. Supports both a determinate value in [0, 1]
+// and an indeterminate animated stripe.
+module Yaynu.Tui.Widget.Progress;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+
+type Progress = box struct {
+    value       : F64,       // -1.0 = indeterminate; else clamped to [0, 1]
+    width       : I64,
+    style       : Style,
+    fill_char   : String,
+    empty_char  : String,
+    label       : Option String,
+    frame_index : I64        // for indeterminate animation
+};
+
+namespace Progress {
+
+    new : Progress;
+    new = Progress {
+        value       : 0.0,
+        width       : 20,
+        style       : Style::default,
+        fill_char   : "█",
+        empty_char  : "░",
+        label       : Option::none(),
+        frame_index : 0
+    };
+
+    with_value : F64 -> Progress -> Progress;
+    with_value = |v, p| p.set_value(v);
+
+    with_width : I64 -> Progress -> Progress;
+    with_width = |w, p| p.set_width(w);
+
+    indeterminate : I64 -> Progress;
+    indeterminate = |w| Progress::new.set_value(-1.0).set_width(w);
+
+    tick : Progress -> Progress;
+    tick = |p| (
+        if p.@value >= 0.0 { p } else {
+            let n = if p.@width > 0 { p.@width } else { 1 };
+            let next = p.@frame_index + 1;
+            p.set_frame_index(if next >= n { 0 } else { next })
+        }
+    );
+}
+
+namespace Frame {
+
+    render_progress : Progress -> Rect -> Frame -> Frame;
+    render_progress = |p, rect, frame| (
+        if rect.is_empty { frame };
+        let bar_w = if p.@width > rect.@width { rect.@width } else { p.@width };
+        let v = p.@value;
+        let bar = if v < 0.0 {
+            _render_indet_bar(bar_w, p.@frame_index, p.@fill_char, p.@empty_char)
+        } else {
+            let cv = if v > 1.0 { 1.0 } else { if v < 0.0 { 0.0 } else { v } };
+            let filled = (cv * bar_w.to_F64).to_I64;
+            let filled = if filled > bar_w { bar_w } else { filled };
+            let f_part = Array::from_map(filled, |_| p.@fill_char).to_iter.concat_iter;
+            let e_part = Array::from_map(bar_w - filled, |_| p.@empty_char).to_iter.concat_iter;
+            f_part + e_part
+        };
+        let body = match p.@label {
+            some(s) => bar + " " + s,
+            none() => (
+                if v >= 0.0 {
+                    let cv = if v > 1.0 { 1.0 } else { if v < 0.0 { 0.0 } else { v } };
+                    let pct = (cv * 100.0).to_I64;
+                    bar + " " + pct.to_string + "%"
+                } else { bar }
+            )
+        };
+        let truncated = Width::truncate(rect.@width, body);
+        frame.mod_buffer(|buf|
+            Buffer::set_string(rect.@x, rect.@y, truncated, p.@style, buf)
+        )
+    );
+}
+
+_render_indet_bar : I64 -> I64 -> String -> String -> String;
+_render_indet_bar = |w, frame_idx, fill_ch, empty_ch| (
+    if w <= 0 { "" };
+    let stripe = w / 4 + 1;
+    let head = frame_idx % w;
+    Array::from_map(w, |i| (
+        let d = (i + w - head) % w;
+        if d < stripe { fill_ch } else { empty_ch }
+    )).to_iter.concat_iter
+);

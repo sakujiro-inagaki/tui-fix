@@ -1,0 +1,25 @@
+module BorderTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Widget.Border;
+
+run : IO ();
+run = (
+    let r = Rect::make(2, 1, 10, 5);
+    let inner_all = Border::all.inner(r);
+    assert_eq(|_|"inner all", [inner_all.@x, inner_all.@y, inner_all.@width, inner_all.@height], [3, 2, 8, 3]);;
+    let inner_none = Border::none.inner(r);
+    assert_eq(|_|"inner none", [inner_none.@x, inner_none.@y, inner_none.@width, inner_none.@height], [2, 1, 10, 5]);;
+    // Rounded corners.
+    let f = Frame::new(Rect::make(0, 0, 10, 5));
+    let b = Border::all.set_border_type(BorderType::rounded());
+    let f2 = f.render_border(b, Rect::make(0, 0, 4, 3));
+    assert_eq(|_|"rounded tl", Buffer::get_cell(0, 0, f2.@buffer).@ch, "╭");;
+    assert_eq(|_|"rounded tr", Buffer::get_cell(3, 0, f2.@buffer).@ch, "╮");;
+    assert_eq(|_|"rounded bl", Buffer::get_cell(0, 2, f2.@buffer).@ch, "╰");;
+    assert_eq(|_|"rounded br", Buffer::get_cell(3, 2, f2.@buffer).@ch, "╯");;
+    pure()
+);

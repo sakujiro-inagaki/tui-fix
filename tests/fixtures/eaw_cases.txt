@@ -1,0 +1,26 @@
+# East Asian Width / grapheme-cluster fixture cases.
+#
+# Format: each non-blank, non-comment line is `EXPECTED_WIDTH<TAB>STRING`,
+# where STRING is a UTF-8 byte sequence (literal — do NOT escape).
+# Lines starting with `#` and blank lines are ignored.
+#
+# Coverage:
+#   - ASCII letters / digits / mixed
+#   - Mixed Japanese + ASCII
+#   - Fullwidth digits, halfwidth katakana
+#   - Single emoji presentation
+#   - ZWJ family
+#   - Skin-tone modifier
+#   - Regional Indicator pair (flag)
+#   - Combining-mark cluster (e + U+0301)
+#   - Lone ZWJ inside ASCII (should contribute 0 width)
+5	Hello
+12	Hello, 世界!
+4	１２
+3	ｱｲｳ
+2	😀
+2	👨‍👩‍👧‍👦
+2	👋🏽
+2	🇯🇵
+4	café
+6	ABC‍DEF

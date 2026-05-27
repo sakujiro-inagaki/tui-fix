@@ -1,0 +1,7 @@
+.claude
+.fixlang
+/a.out
+/target/
+*.o
+*.so
+*.dylib

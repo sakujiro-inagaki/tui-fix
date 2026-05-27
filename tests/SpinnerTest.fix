@@ -1,0 +1,38 @@
+module SpinnerTest;
+
+import Yaynu.Tui.Width;
+import Yaynu.Tui.Widget.Spinner;
+
+run : IO ();
+run = (
+    // tick advances and wraps.
+    let s0 = Spinner::ball;
+    let s1 = s0.tick;
+    assert_eq(|_|"tick once", s1.@frame_index, 1);;
+    let n = s0.@frames.get_size;
+    let s_full = loop(s0, |s| (
+        if s.@frame_index == n - 1 { break $ s };
+        continue $ s.tick
+    ));
+    let s_wrap = s_full.tick;
+    assert_eq(|_|"tick wraps", s_wrap.@frame_index, 0);;
+    // All frames of each preset have equal width.
+    let _ = _check_preset_width("dots", Spinner::dots.@frames);
+    let _ = _check_preset_width("line", Spinner::line.@frames);
+    let _ = _check_preset_width("ball", Spinner::ball.@frames);
+    let _ = _check_preset_width("arrows", Spinner::arrows.@frames);
+    let _ = _check_preset_width("clock", Spinner::clock.@frames);
+    let _ = _check_preset_width("box_bounce", Spinner::box_bounce.@frames);
+    let _ = _check_preset_width("pear_hands", Spinner::pear_hands.@frames);
+    // pear_hands all frames are width 2.
+    let widths = Spinner::pear_hands.@frames.to_iter.map(Width::string_width).to_array;
+    assert_eq(|_|"pear_hands all width 2", widths.to_iter.fold(true, |w, acc| acc && w == 2), true);;
+    pure()
+);
+
+_check_preset_width : String -> Array String -> Bool;
+_check_preset_width = |_name, frames| (
+    let widths = frames.to_iter.map(Width::string_width).to_array;
+    let w0 = widths.@(0);
+    widths.to_iter.fold(true, |w, acc| acc && w == w0)
+);

@@ -1,0 +1,76 @@
+// spinner_demo.fix — every preset side-by-side, 100ms ticks.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.Spinner;
+import Yaynu.Term.Key;
+
+type Demo = box struct {
+    dots : Spinner,
+    line : Spinner,
+    ball : Spinner,
+    arrows : Spinner,
+    clock : Spinner,
+    box_bounce : Spinner,
+    pear_hands : Spinner
+};
+
+impl Demo : TuiApp {
+    initial = Demo {
+        dots       : Spinner::dots.with_label("dots"),
+        line       : Spinner::line.with_label("line"),
+        ball       : Spinner::ball.with_label("ball"),
+        arrows     : Spinner::arrows.with_label("arrows"),
+        clock      : Spinner::clock.with_label("clock"),
+        box_bounce : Spinner::box_bounce.with_label("box_bounce"),
+        pear_hands : Spinner::pear_hands.with_label("pear_hands")
+    };
+    view = |s, frame| (
+        let r = frame.@size;
+        let row = |i| Rect::make(r.@x, r.@y + i, r.@width, 1);
+        frame
+            .render_spinner(s.@dots,       row(0))
+            .render_spinner(s.@line,       row(1))
+            .render_spinner(s.@ball,       row(2))
+            .render_spinner(s.@arrows,     row(3))
+            .render_spinner(s.@clock,      row(4))
+            .render_spinner(s.@box_bounce, row(5))
+            .render_spinner(s.@pear_hands, row(6))
+            .render_text("Esc to quit.", Style::default.set_dim(true), row(8))
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    _        => UpdateResult::continue(s)
+                }
+            ),
+            tick() => UpdateResult::continue(
+                s.set_dots(s.@dots.tick)
+                 .set_line(s.@line.tick)
+                 .set_ball(s.@ball.tick)
+                 .set_arrows(s.@arrows.tick)
+                 .set_clock(s.@clock.tick)
+                 .set_box_bounce(s.@box_bounce.tick)
+                 .set_pear_hands(s.@pear_hands.tick)
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::some(100);
+}
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);

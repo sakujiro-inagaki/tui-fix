@@ -1,0 +1,124 @@
+module WidthTest;
+
+import Yaynu.Tui.Width;
+import Yaynu.Tui.Width.Grapheme;
+
+// Build single-character strings from raw UTF-8 byte sequences. Fix
+// string literals do not support \u{} escapes, so all non-printable
+// or generated test inputs go through these helpers.
+_bel : String;
+_bel = String::_unsafe_from_c_str([7_U8, 0_U8]);
+
+_combining_acute : String;
+_combining_acute = String::_unsafe_from_c_str([0xCC_U8, 0x81_U8, 0_U8]);
+
+_zwj : String;
+_zwj = String::_unsafe_from_c_str([0xE2_U8, 0x80_U8, 0x8D_U8, 0_U8]);
+
+run : IO ();
+run = (
+    // char_width
+    assert_eq(|_|"ASCII A", Width::char_width("A"), 1);;
+    assert_eq(|_|"Kanji", Width::char_width("漢"), 2);;
+    assert_eq(|_|"Fullwidth digit", Width::char_width("１"), 2);;
+    assert_eq(|_|"Halfwidth katakana", Width::char_width("ｱ"), 1);;
+    assert_eq(|_|"BEL is 0", Width::char_width(_bel), 0);;
+    assert_eq(|_|"combining acute is 0", Width::char_width(_combining_acute), 0);;
+    assert_eq(|_|"bare emoji is 2", Width::char_width("😀"), 2);;
+    assert_eq(|_|"digit zero is 1", Width::char_width("0"), 1);;
+    // Ambiguous width override
+    let amb_before = *Width::get_ambiguous_width;
+    assert_eq(|_|"ambiguous default", amb_before, 1);;
+    Width::set_ambiguous_width(2);;
+    assert_eq(|_|"Greek alpha A-class width 2 when amb=2", Width::char_width("Α"), 2);;
+    Width::set_ambiguous_width(1);;
+    assert_eq(|_|"Greek alpha width 1 when amb=1", Width::char_width("Α"), 1);;
+    // string_width
+    assert_eq(|_|"ASCII string", Width::string_width("Hello"), 5);;
+    assert_eq(|_|"mixed JA/EN", Width::string_width("Hello, 世界!"), 12);;
+    assert_eq(|_|"ZWJ family", Width::string_width("👨‍👩‍👧‍👦"), 2);;
+    assert_eq(|_|"skin tone", Width::string_width("👋🏽"), 2);;
+    assert_eq(|_|"regional indicator", Width::string_width("🇯🇵"), 2);;
+    assert_eq(|_|"combining mark cluster", Width::string_width("cafe" + _combining_acute), 4);;
+    assert_eq(|_|"lone ZWJ", Width::string_width("ABC" + _zwj + "DEF"), 6);;
+    assert_eq(|_|"control skipped", Width::string_width(_bel + "Hello"), 5);;
+    // iter_graphemes
+    let g1 = Width::iter_graphemes("abc").to_array;
+    assert_eq(|_|"abc cluster count", g1.get_size, 3);;
+    assert_eq(|_|"abc[0]", g1.@(0).@text, "a");;
+    assert_eq(|_|"abc widths", g1.@(0).@width, 1);;
+    let g2 = Width::iter_graphemes("👨‍👩‍👧‍👦").to_array;
+    assert_eq(|_|"family is one cluster", g2.get_size, 1);;
+    assert_eq(|_|"family width", g2.@(0).@width, 2);;
+    let g3 = Width::iter_graphemes("e" + _combining_acute).to_array;
+    assert_eq(|_|"e+acute is one cluster", g3.get_size, 1);;
+    assert_eq(|_|"e+acute width", g3.@(0).@width, 1);;
+    let crlf = String::_unsafe_from_c_str([13_U8, 10_U8, 0_U8]);
+    let g4 = Width::iter_graphemes(crlf).to_array;
+    assert_eq(|_|"CRLF is one cluster", g4.get_size, 1);;
+    // truncate
+    assert_eq(|_|"truncate exact", Width::truncate(3, "Hello"), "Hel");;
+    assert_eq(|_|"truncate wide overflow", Width::truncate(3, "あい"), "あ");;
+    assert_eq(|_|"truncate budget 0", Width::truncate(0, "Hello"), "");;
+    assert_eq(|_|"truncate atomic zwj", Width::truncate(1, "👨‍👩‍👧‍👦"), "");;
+    // truncate_with_ellipsis
+    assert_eq(|_|"ellipsis passthrough", Width::truncate_with_ellipsis(10, "abc"), "abc");;
+    assert_eq(|_|"ellipsis shorten", Width::truncate_with_ellipsis(5, "Hello, World"), "Hell…");;
+    assert_eq(|_|"ellipsis 0", Width::truncate_with_ellipsis(0, "Hello"), "");;
+    // Fixture-file driven cases.
+    _run_fixture;;
+    pure()
+);
+
+// Parse tests/fixtures/eaw_cases.txt and assert each line's
+// expected width matches Width::string_width on the line's string.
+_run_fixture : IO ();
+_run_fixture = (
+    let contents = *IO::read_file_string("tests/fixtures/eaw_cases.txt").to_result;
+    let text = match contents {
+        ok(t)  => t,
+        err(_) => "" // missing fixture file → skip silently
+    };
+    if text == "" { pure() };
+    let lines = text.split("\n").to_array;
+    lines.to_iter.fold_m((), |line, _| (
+        let t = line;
+        if t == "" { pure() };
+        let bs = t.get_bytes;
+        let n = bs.get_size;
+        let first = if n == 0 { 0_U8 } else { bs.@(0) };
+        if first == 35_U8 { pure() };  // '#' comment
+        // Split on first TAB.
+        let tab_idx = loop(0, |i| (
+            if i >= n { break $ -1 };
+            if bs.@(i) == 9_U8 { break $ i };
+            continue $ i + 1
+        ));
+        if tab_idx < 0 { pure() };
+        let expected_str = (
+            let slice = Array::from_map(tab_idx, |i| bs.@(i));
+            String::_unsafe_from_c_str(slice.push_back(0_U8))
+        );
+        let rest_len = n - tab_idx - 1;
+        // Drop possible trailing NUL from line bytes.
+        let rest_len = if rest_len > 0 && bs.@(n - 1) == 0_U8 { rest_len - 1 } else { rest_len };
+        let value_str = (
+            let slice = Array::from_map(rest_len, |i| bs.@(tab_idx + 1 + i));
+            String::_unsafe_from_c_str(slice.push_back(0_U8))
+        );
+        let expected = expected_str.from_string;
+        let exp_i64 : I64 = match expected {
+            ok(v)  => v,
+            err(_) => -1
+        };
+        if exp_i64 < 0 { pure() };
+        let actual = Width::string_width(value_str);
+        if actual == exp_i64 {
+            pure()
+        } else {
+            println("fixture mismatch: expected=" + exp_i64.to_string + " actual=" + actual.to_string + " line=" + t);;
+            assert_eq(|_|"fixture line: " + t, actual, exp_i64)
+        }
+    ));;
+    pure()
+);

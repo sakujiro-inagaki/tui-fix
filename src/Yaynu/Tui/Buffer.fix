@@ -1,0 +1,125 @@
+// In-memory frame canvas: a row-major array of Cell with explicit
+// width and height. All write operations clip out-of-bounds writes
+// silently.
+module Yaynu.Tui.Buffer;
+
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Width;
+
+type Buffer = struct {
+    width  : I64,
+    height : I64,
+    cells  : Array Cell
+};
+
+namespace Buffer {
+
+    empty : I64 -> I64 -> Buffer;
+    empty = |w, h| (
+        let n = if w <= 0 || h <= 0 { 0 } else { w * h };
+        Buffer {
+            width  : if w < 0 { 0 } else { w },
+            height : if h < 0 { 0 } else { h },
+            cells  : Array::fill(n, Cell::blank)
+        }
+    );
+
+    // Write a single cell. No-op when out of bounds.
+    set_cell : I64 -> I64 -> Cell -> Buffer -> Buffer;
+    set_cell = |x, y, c, buf| (
+        if x < 0 || y < 0 || x >= buf.@width || y >= buf.@height { buf };
+        let idx = y * buf.@width + x;
+        buf.mod_cells(|cs| cs.set(idx, c))
+    );
+
+    // Fill a rect with one cell value. Out-of-bounds clipped.
+    fill : Rect -> Cell -> Buffer -> Buffer;
+    fill = |rect, c, buf| (
+        if rect.@width <= 0 || rect.@height <= 0 { buf };
+        let x0 = if rect.@x < 0 { 0 } else { rect.@x };
+        let y0 = if rect.@y < 0 { 0 } else { rect.@y };
+        let x1 = rect.@x + rect.@width;
+        let y1 = rect.@y + rect.@height;
+        let x1 = if x1 > buf.@width  { buf.@width  } else { x1 };
+        let y1 = if y1 > buf.@height { buf.@height } else { y1 };
+        loop((buf, y0), |(b, y)| (
+            if y >= y1 { break $ b };
+            let b_next = loop((b, x0), |(bb, x)| (
+                if x >= x1 { break $ bb };
+                let idx = y * bb.@width + x;
+                continue $ (bb.mod_cells(|cs| cs.set(idx, c)), x + 1)
+            ));
+            continue $ (b_next, y + 1)
+        ))
+    );
+
+    // Write a UTF-8 string at (x, y), one cluster per cell. Wide
+    // clusters write a continuation marker in the next cell. Clipping
+    // at the right edge drops the cluster entirely rather than
+    // splitting (preserves the empty trailing column).
+    set_string : I64 -> I64 -> String -> Style -> Buffer -> Buffer;
+    set_string = |x, y, text, style, buf| (
+        if y < 0 || y >= buf.@height { buf };
+        if x >= buf.@width { buf };
+        let clusters = Width::iter_graphemes(text).to_array;
+        let n = clusters.get_size;
+        loop((buf, x, 0), |(b, cx, i)| (
+            if i >= n { break $ b };
+            let g = clusters.@(i);
+            let w = g.@width;
+            if w == 0 { continue $ (b, cx, i + 1) };
+            if cx + w > b.@width { break $ b };
+            if cx < 0 {
+                // Skip until we reach 0.
+                continue $ (b, cx + w, i + 1)
+            };
+            let cell = Cell { ch : g.@text, style : style };
+            let b1 = Buffer::set_cell(cx, y, cell, b);
+            let b2 = if w == 2 {
+                Buffer::set_cell(cx + 1, y, Cell::continuation(style), b1)
+            } else { b1 };
+            continue $ (b2, cx + w, i + 1)
+        ))
+    );
+
+    // Set string clipped to a sub-rect; the (offset_x, offset_y) is
+    // measured from the rect's top-left, and writes that fall outside
+    // the rect are dropped.
+    set_string_clipped : Rect -> I64 -> I64 -> String -> Style -> Buffer -> Buffer;
+    set_string_clipped = |rect, offset_x, offset_y, text, style, buf| (
+        if rect.is_empty { buf };
+        let y = rect.@y + offset_y;
+        if y < rect.@y || y >= rect.@y + rect.@height { buf };
+        let clusters = Width::iter_graphemes(text).to_array;
+        let n = clusters.get_size;
+        let max_x = rect.@x + rect.@width;
+        loop((buf, rect.@x + offset_x, 0), |(b, cx, i)| (
+            if i >= n { break $ b };
+            let g = clusters.@(i);
+            let w = g.@width;
+            if w == 0 { continue $ (b, cx, i + 1) };
+            if cx + w > max_x { break $ b };
+            if cx >= b.@width { break $ b };
+            if cx + w > b.@width { break $ b };
+            if cx < rect.@x { continue $ (b, cx + w, i + 1) };
+            let cell = Cell { ch : g.@text, style : style };
+            let b1 = Buffer::set_cell(cx, y, cell, b);
+            let b2 = if w == 2 {
+                Buffer::set_cell(cx + 1, y, Cell::continuation(style), b1)
+            } else { b1 };
+            continue $ (b2, cx + w, i + 1)
+        ))
+    );
+
+    // Read a cell, returning a blank when out of bounds.
+    get_cell : I64 -> I64 -> Buffer -> Cell;
+    get_cell = |x, y, buf| (
+        if x < 0 || y < 0 || x >= buf.@width || y >= buf.@height {
+            Cell::blank
+        } else {
+            buf.@cells.@(y * buf.@width + x)
+        }
+    );
+}

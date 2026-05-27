@@ -1,0 +1,56 @@
+// width_demo.fix — display Japanese, emoji, ZWJ, skin-tone, RI, and
+// combining-mark text on separate lines. Esc quits.
+//
+// Run with `fix run -f examples/width_demo.fix`.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Term.Key;
+
+type Demo = box struct { _placeholder : () };
+
+_combining_acute : String;
+_combining_acute = String::_unsafe_from_c_str([0xCC_U8, 0x81_U8, 0_U8]);
+
+impl Demo : TuiApp {
+    initial = Demo { _placeholder : () };
+    view = |_, frame| (
+        let r = frame.@size;
+        let lines : Array String = [
+            "Japanese:       こんにちは、世界！",
+            "Emoji:          😀 😎 🙃",
+            "ZWJ family:     👨‍👩‍👧‍👦",
+            "Skin tone:      👋🏽",
+            "Flag (RI pair): 🇯🇵",
+            "Combining mark: cafe" + _combining_acute,
+            "",
+            "Press Esc to quit."
+        ];
+        loop((frame, 0), |(f, i)| (
+            if i >= lines.get_size { break $ f };
+            let row_rect = Rect::make(r.@x, r.@y + i, r.@width, 1);
+            continue $ (f.render_text(lines.@(i), Style::default, row_rect), i + 1)
+        ))
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (match k { escape() => UpdateResult::quit(), _ => UpdateResult::continue(s) }),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);

@@ -1,0 +1,268 @@
+// Rect and Constraint: layout primitives.
+//
+// A `Rect` describes an axis-aligned cell region. Coordinates are
+// 0-origin with (0, 0) at the top-left. `split_horizontal` and
+// `split_vertical` carve a parent rect into child rects according to
+// an array of `Constraint`s.
+module Yaynu.Tui.Rect;
+
+type Rect = struct {
+    x      : I64,
+    y      : I64,
+    width  : I64,
+    height : I64
+};
+
+type Constraint = box union {
+    fixed      : I64,
+    percentage : I64,
+    ratio      : (I64, I64),
+    min        : I64,
+    max        : I64,
+    fill       : I64
+};
+
+namespace Rect {
+
+    make : I64 -> I64 -> I64 -> I64 -> Rect;
+    make = |x, y, w, h| Rect { x : x, y : y, width : w, height : h };
+
+    // True when the rect has zero or negative area.
+    is_empty : Rect -> Bool;
+    is_empty = |r| r.@width <= 0 || r.@height <= 0;
+
+    // Split this rect into sub-rects along the X axis according to
+    // the given constraints. See the layout spec for semantics.
+    split_horizontal : Array Constraint -> Rect -> Array Rect;
+    split_horizontal = |constraints, r| (
+        let sizes = _solve(constraints, r.@width);
+        _build_rects_x(r, sizes)
+    );
+
+    // Mirror of split_horizontal on the Y axis.
+    split_vertical : Array Constraint -> Rect -> Array Rect;
+    split_vertical = |constraints, r| (
+        let sizes = _solve(constraints, r.@height);
+        _build_rects_y(r, sizes)
+    );
+}
+
+_build_rects_x : Rect -> Array I64 -> Array Rect;
+_build_rects_x = |parent, sizes| (
+    let n = sizes.get_size;
+    let (_, out) = loop((0, []), |(offset, acc)| (
+        if acc.get_size >= n { break $ (offset, acc) };
+        let i = acc.get_size;
+        let w = sizes.@(i);
+        let sub = Rect::make(parent.@x + offset, parent.@y, w, parent.@height);
+        continue $ (offset + w, acc.push_back(sub))
+    ));
+    out
+);
+
+_build_rects_y : Rect -> Array I64 -> Array Rect;
+_build_rects_y = |parent, sizes| (
+    let n = sizes.get_size;
+    let (_, out) = loop((0, []), |(offset, acc)| (
+        if acc.get_size >= n { break $ (offset, acc) };
+        let i = acc.get_size;
+        let h = sizes.@(i);
+        let sub = Rect::make(parent.@x, parent.@y + offset, parent.@width, h);
+        continue $ (offset + h, acc.push_back(sub))
+    ));
+    out
+);
+
+// Two-pass constraint solver. Returns an Array I64 whose entries sum
+// to exactly `total` (the parent's axis length). Empty constraint
+// array → empty Array I64.
+_solve : Array Constraint -> I64 -> Array I64;
+_solve = |constraints, total| (
+    let n = constraints.get_size;
+    if n == 0 { [] };
+
+    // Pass 1: assign tentative size (floor) + record fill weights +
+    // percentage/ratio fractional remainders for the fallback
+    // largest-remainder distribution when no fills are present.
+    let initial : Array (I64, I64) = Array::from_map(n, |_| (0, 0));
+    let (sizes, fill_weights, pct_remainders, _) = loop((initial, [], [], 0), |(sizes, fills, pcts, i)| (
+        if i >= n { break $ (sizes, fills, pcts, i) };
+        let c = constraints.@(i);
+        let (sz, weight, pct_rem) = match c {
+            fixed(v)         => (v, 0, 0),
+            percentage(p)    => (
+                (total * p) / 100,
+                0,
+                (total * p) - ((total * p) / 100) * 100
+            ),
+            ratio((nn, dd))  => (
+                if dd == 0 { 0 } else { (total * nn) / dd },
+                0,
+                if dd == 0 { 0 } else { (total * nn) - ((total * nn) / dd) * dd }
+            ),
+            min(v)           => (v, 0, 0),
+            max(v)           => (0, 0, 0),
+            fill(w)          => (0, w, 0)
+        };
+        let sizes_next = sizes.set(i, (sz, weight));
+        let fills_next = if match c { fill(_) => true, _ => false } {
+            fills.push_back((i, weight))
+        } else { fills };
+        let pcts_next = if pct_rem > 0 { pcts.push_back((i, pct_rem)) } else { pcts };
+        continue $ (sizes_next, fills_next, pcts_next, i + 1)
+    ));
+
+    // Compute used by non-fill constraints.
+    let used = sizes.to_iter.fold(0, |(sz, w), acc| if w == 0 { acc + sz } else { acc });
+    let remaining = total - used;
+
+    let final_sizes_pairs = if fill_weights.get_size == 0 {
+        if remaining > 0 && pct_remainders.get_size > 0 {
+            // Distribute remainder via largest-remainder to percentage entries.
+            _distribute_by_remainder(sizes, pct_remainders, remaining)
+        } else if remaining < 0 {
+            _shrink_from_end(sizes, -remaining)
+        } else {
+            sizes
+        }
+    } else {
+        if remaining < 0 {
+            _shrink_from_end(sizes, -remaining)
+        } else {
+            _distribute_fills(sizes, fill_weights, remaining)
+        }
+    };
+
+    Array::from_map(n, |i| final_sizes_pairs.@(i).@0)
+);
+
+// Hand out `pool` extra units, one at a time, to the entries with the
+// largest remainder values (descending, stable).
+_distribute_by_remainder : Array (I64, I64) -> Array (I64, I64) -> I64 -> Array (I64, I64);
+_distribute_by_remainder = |sizes, candidates, pool| (
+    let n_c = candidates.get_size;
+    if n_c == 0 { sizes };
+    // Sort candidate indices by descending remainder.
+    let idx = Array::from_map(n_c, |k| k);
+    let idx = _sort_cands_desc(idx, candidates);
+    loop((sizes, 0), |(s, k)| (
+        if k >= pool { break $ s };
+        let pos = k % n_c;
+        let (orig_i, _) = candidates.@(idx.@(pos));
+        let (cur, w) = s.@(orig_i);
+        continue $ (s.set(orig_i, (cur + 1, w)), k + 1)
+    ))
+);
+
+_sort_cands_desc : Array I64 -> Array (I64, I64) -> Array I64;
+_sort_cands_desc = |indices, cands| (
+    let n = indices.get_size;
+    loop((indices, 0), |(arr, i)| (
+        if i >= n { break $ arr };
+        let init_rem = cands.@(arr.@(i)).@1;
+        let triple = loop((i, init_rem, i), |(bj, br, j)| (
+            if j >= n { break $ (bj, br, j) };
+            let cur_rem = cands.@(arr.@(j)).@1;
+            if cur_rem > br { continue $ (j, cur_rem, j + 1) } else { continue $ (bj, br, j + 1) }
+        ));
+        let best_j = triple.@0;
+        let arr_next = if best_j == i { arr } else {
+            let a = arr.@(i);
+            let b = arr.@(best_j);
+            arr.set(i, b).set(best_j, a)
+        };
+        continue $ (arr_next, i + 1)
+    ))
+);
+
+// Hamilton largest-remainder: distribute `pool` units across the
+// entries identified by `fills` (list of (index, weight)). Resulting
+// totals exactly equal `pool`.
+_distribute_fills : Array (I64, I64) -> Array (I64, I64) -> I64 -> Array (I64, I64);
+_distribute_fills = |sizes, fills, pool| (
+    let total_weight = fills.to_iter.fold(0, |(_, w), acc| acc + w);
+    if total_weight <= 0 {
+        // No effective weight — give pool to the first fill.
+        if fills.get_size == 0 { sizes } else {
+            let i = fills.@(0).@0;
+            let (s, w) = sizes.@(i);
+            sizes.set(i, (s + pool, w))
+        }
+    } else {
+        // Floor allocation + remainders.
+        let n_fills = fills.get_size;
+        let floors_remainders = Array::from_map(n_fills, |k| (
+            let (_, w) = fills.@(k);
+            let f = (pool * w) / total_weight;
+            let rem = (pool * w) - f * total_weight;
+            (f, rem)
+        ));
+        let allocated = floors_remainders.to_iter.fold(0, |(f, _), acc| acc + f);
+        let leftover = pool - allocated;
+        // Indices sorted by remainder descending (stable).
+        let indices = Array::from_map(n_fills, |k| k);
+        let indices = _sort_by_remainder_desc(indices, floors_remainders);
+        // Hand out one extra unit to the top `leftover` entries.
+        let final_floors = loop((floors_remainders, 0), |(arr, k)| (
+            if k >= leftover { break $ arr };
+            let idx = indices.@(k);
+            let (f, rem) = arr.@(idx);
+            continue $ (arr.set(idx, (f + 1, rem)), k + 1)
+        ));
+        // Project back to sizes.
+        loop((sizes, 0), |(sz, k)| (
+            if k >= n_fills { break $ sz };
+            let (orig_i, _) = fills.@(k);
+            let (extra, _) = final_floors.@(k);
+            let (cur, w) = sz.@(orig_i);
+            continue $ (sz.set(orig_i, (cur + extra, w)), k + 1)
+        ))
+    }
+);
+
+// Selection-sort indices by descending remainder (stable on equal).
+_sort_by_remainder_desc : Array I64 -> Array (I64, I64) -> Array I64;
+_sort_by_remainder_desc = |indices, fr| (
+    let n = indices.get_size;
+    loop((indices, 0), |(arr, i)| (
+        if i >= n { break $ arr };
+        // Find max remainder at index >= i. State = (best_j, best_rem, j).
+        let init_rem = fr.@(arr.@(i)).@1;
+        let triple = loop((i, init_rem, i), |(bj, br, j)| (
+            if j >= n { break $ (bj, br, j) };
+            let cur_rem = fr.@(arr.@(j)).@1;
+            if cur_rem > br {
+                continue $ (j, cur_rem, j + 1)
+            } else {
+                continue $ (bj, br, j + 1)
+            }
+        ));
+        let best_j = triple.@0;
+        let arr_next = if best_j == i { arr } else {
+            let a = arr.@(i);
+            let b = arr.@(best_j);
+            arr.set(i, b).set(best_j, a)
+        };
+        continue $ (arr_next, i + 1)
+    ))
+);
+
+// Subtract `excess` from the last entries (each clamped to 0).
+_shrink_from_end : Array (I64, I64) -> I64 -> Array (I64, I64);
+_shrink_from_end = |sizes, excess| (
+    let n = sizes.get_size;
+    let (out, _) = loop((sizes, excess), |(s, rem)| (
+        if rem <= 0 { break $ (s, rem) };
+        // Find rightmost entry with sz > 0.
+        let last = loop(n - 1, |i| (
+            if i < 0 { break $ -1 };
+            if s.@(i).@0 > 0 { break $ i };
+            continue $ i - 1
+        ));
+        if last < 0 { break $ (s, rem) };
+        let (cur, w) = s.@(last);
+        let take = if cur > rem { rem } else { cur };
+        continue $ (s.set(last, (cur - take, w)), rem - take)
+    ));
+    out
+);

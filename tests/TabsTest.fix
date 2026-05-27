@@ -1,0 +1,27 @@
+module TabsTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Widget.Tabs;
+
+run : IO ();
+run = (
+    let t = Tabs::new(["a", "b", "c"]).with_selected(1);
+    // next wraps.
+    let t2 = t.with_selected(2);
+    let t3 = t2.next;
+    assert_eq(|_|"next wraps to 0", t3.@selected, 0);;
+    // prev wraps.
+    let t4 = t.with_selected(0).prev;
+    assert_eq(|_|"prev wraps to 2", t4.@selected, 2);;
+    // Render to check title placement and divider.
+    let f = Frame::new(Rect::make(0, 0, 20, 1));
+    let f2 = f.render_tabs(t, Rect::make(0, 0, 20, 1));
+    assert_eq(|_|"tabs[0] a", Buffer::get_cell(0, 0, f2.@buffer).@ch, "a");;
+    assert_eq(|_|"tabs divider |", Buffer::get_cell(2, 0, f2.@buffer).@ch, "|");;
+    assert_eq(|_|"tabs[1] b", Buffer::get_cell(4, 0, f2.@buffer).@ch, "b");;
+    assert_eq(|_|"tabs[2] c", Buffer::get_cell(8, 0, f2.@buffer).@ch, "c");;
+    pure()
+);

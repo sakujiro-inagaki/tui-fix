@@ -1,0 +1,26 @@
+module DiffTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Diff;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Term.Ansi;
+
+run : IO ();
+run = (
+    // Identical buffers → empty.
+    let a = Buffer::empty(10, 3);
+    assert_eq(|_|"identical buffers", Diff::diff_to_ansi(a, a), "");;
+    // Single changed cell.
+    let b = Buffer::set_cell(3, 1, Cell { ch : "B", style : Style::default }, a);
+    let out = Diff::diff_to_ansi(a, b);
+    let expected = Ansi::move_to(2, 4) + "B" + Ansi::reset;
+    assert_eq(|_|"single changed cell", out, expected);;
+    // Run of changed cells.
+    let c = Buffer::set_string(2, 0, "ABCDE", Style::default, a);
+    let out2 = Diff::diff_to_ansi(a, c);
+    let expected2 = Ansi::move_to(1, 3) + "ABCDE" + Ansi::reset;
+    assert_eq(|_|"run of changes", out2, expected2);;
+    pure()
+);

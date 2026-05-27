@@ -1,0 +1,119 @@
+// List widget: a vertical column of selectable rows.
+module Yaynu.Tui.Widget.List;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+import Yaynu.Term.Key;
+
+type ListItem a = struct {
+    text  : String,
+    value : a,
+    style : Style
+};
+
+type List a = box struct {
+    items            : Array (ListItem a),
+    selected         : Option I64,
+    scroll           : I64,
+    style            : Style,
+    selected_style   : Style,
+    highlight_symbol : Option String
+};
+
+namespace ListItem {
+    new : String -> a -> ListItem a;
+    new = |t, v| ListItem { text : t, value : v, style : Style::default };
+}
+
+namespace List {
+
+    new : Array (ListItem a) -> List a;
+    new = |items| List {
+        items            : items,
+        selected         : Option::none(),
+        scroll           : 0,
+        style            : Style::default,
+        selected_style   : Style::default.set_reverse(true),
+        highlight_symbol : Option::none()
+    };
+
+    with_selected : I64 -> List a -> List a;
+    with_selected = |idx, l| l.set_selected(Option::some(idx));
+
+    with_highlight_symbol : String -> List a -> List a;
+    with_highlight_symbol = |s, l| l.set_highlight_symbol(Option::some(s));
+
+    selected_value : List a -> Option a;
+    selected_value = |l| (
+        match l.@selected {
+            none() => Option::none(),
+            some(i) => (
+                if i < 0 || i >= l.@items.get_size {
+                    Option::none()
+                } else {
+                    Option::some(l.@items.@(i).@value)
+                }
+            )
+        }
+    );
+
+    handle_key : Key -> List a -> List a;
+    handle_key = |k, l| (
+        let n = l.@items.get_size;
+        if n == 0 { l };
+        let cur = match l.@selected { none() => 0, some(i) => i };
+        let new_sel = match k {
+            arrow_down()  => if cur + 1 < n { cur + 1 } else { cur },
+            arrow_up()    => if cur > 0 { cur - 1 } else { 0 },
+            page_down()   => (
+                let t = cur + 10;
+                if t >= n { n - 1 } else { t }
+            ),
+            page_up()     => if cur >= 10 { cur - 10 } else { 0 },
+            home()        => 0,
+            end_key()     => n - 1,
+            _             => cur
+        };
+        l.set_selected(Option::some(new_sel))
+    );
+}
+
+namespace Frame {
+
+    render_list : List a -> Rect -> Frame -> Frame;
+    render_list = |l, rect, frame| (
+        if rect.is_empty { frame };
+        let scroll = if l.@scroll < 0 { 0 } else { l.@scroll };
+        let n_items = l.@items.get_size;
+        let max_rows = rect.@height;
+        let symbol = match l.@highlight_symbol { none() => "", some(s) => s };
+        let symbol_w = Width::string_width(symbol);
+        let blanks = (
+            Array::from_map(symbol_w, |_| " ").to_iter.concat_iter
+        );
+        loop((frame, 0), |(f, i)| (
+            if i >= max_rows { break $ f };
+            let idx = scroll + i;
+            if idx >= n_items { break $ f };
+            let item = l.@items.@(idx);
+            let is_sel = match l.@selected {
+                none() => false,
+                some(s) => s == idx
+            };
+            let prefix = if is_sel { symbol } else { blanks };
+            let row_style = if is_sel { l.@selected_style } else { l.@style };
+            let text_budget = rect.@width - symbol_w;
+            let body = if text_budget <= 0 { "" } else {
+                Width::truncate(text_budget, item.@text)
+            };
+            let row = prefix + body;
+            let f2 = f.mod_buffer(|buf|
+                Buffer::set_string(rect.@x, rect.@y + i, row, row_style, buf)
+            );
+            continue $ (f2, i + 1)
+        ))
+    );
+}

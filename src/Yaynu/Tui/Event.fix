@@ -1,0 +1,29 @@
+// Event types and the TuiApp trait.
+//
+// Events flow from the run loop into the app's `update`. `tick`
+// fires when the run loop's timed event read times out. `custom` is
+// reserved for application-internal scheduling (no cross-thread
+// injection API in v0.1).
+module Yaynu.Tui.Event;
+
+import Yaynu.Term.Key;
+import Yaynu.Tui.Frame;
+
+type Event = box union {
+    key    : Key,
+    resize : (I64, I64),
+    tick   : (),
+    custom : String
+};
+
+type UpdateResult s = box union {
+    continue : s,
+    quit     : ()
+};
+
+trait s : TuiApp {
+    initial   : s;
+    view      : s -> Frame -> Frame;
+    update    : Event -> s -> UpdateResult s;
+    tick_rate : s -> Option I64;
+}

@@ -1,0 +1,187 @@
+// Grapheme cluster boundary state machine.
+//
+// Splits a string into the substrings that should render as one
+// display unit. Supported boundaries (a subset of UAX #29):
+//   - base + combining mark runs
+//   - extended pictographic + ZWJ + emoji modifier chains
+//   - regional indicator pairs
+//   - \r\n as one cluster
+// Hangul jamo composition and Indic clusters are best-effort (treated
+// as separate clusters).
+module Yaynu.Tui.Width.Grapheme;
+
+import Yaynu.Tui.Width.Table;
+
+// Split `s` into substrings each containing one grapheme cluster.
+split_clusters : String -> Array String;
+split_clusters = |s| (
+    let bytes = _to_bytes_g(s);
+    let n = bytes.get_size;
+    if n == 0 { [] };
+    let (clusters, _) = loop(([], 0), |(acc, i)| (
+        if i >= n { break $ (acc, i) };
+        let (cluster_end, next_i) = _next_cluster(bytes, i);
+        let cluster = _slice_string(bytes, i, cluster_end);
+        continue $ (acc.push_back(cluster), next_i)
+    ));
+    clusters
+);
+
+// Returns (end_byte_index, next_start_index). End index is exclusive.
+_next_cluster : Array U8 -> I64 -> (I64, I64);
+_next_cluster = |bs, start| (
+    let n = bs.get_size;
+    let (cp0, len0) = _decode_at(bs, start);
+    let end0 = start + len0;
+
+    // CRLF special case.
+    if cp0 == 0x0D_U32 && end0 < n {
+        let (cp1, len1) = _decode_at(bs, end0);
+        if cp1 == 0x0A_U32 {
+            (end0 + len1, end0 + len1)
+        } else {
+            (end0, end0)
+        }
+    } else if _is_regional_indicator(cp0) && end0 < n {
+        // RI: pair with next RI if any.
+        let (cp1, len1) = _decode_at(bs, end0);
+        if _is_regional_indicator(cp1) {
+            (end0 + len1, end0 + len1)
+        } else {
+            // Continue extending with combining marks / ZWJ / modifiers.
+            let extended_end = _extend_with_marks(bs, end0);
+            (extended_end, extended_end)
+        }
+    } else {
+        // Standard case: extend with combining marks, variation
+        // selectors, ZWJ + next pictographic, and emoji modifiers.
+        let extended_end = _extend_with_marks(bs, end0);
+        (extended_end, extended_end)
+    }
+);
+
+// Extend a cluster that already covers [_, cur). Returns new exclusive
+// end index. Combining marks / variation selectors / emoji modifiers
+// always extend. A ZWJ extends if it is followed by an emoji
+// codepoint.
+_extend_with_marks : Array U8 -> I64 -> I64;
+_extend_with_marks = |bs, cur| (
+    let n = bs.get_size;
+    loop(cur, |i| (
+        if i >= n { break $ i };
+        let (cp, len) = _decode_at(bs, i);
+        if cp == Table::zwj {
+            // ZWJ extends only if followed by something to glue to.
+            if i + len < n {
+                let (next_cp, next_len) = _decode_at(bs, i + len);
+                if _is_emoji_presentation_or_pict(next_cp) {
+                    continue $ i + len + next_len
+                } else {
+                    break $ i
+                }
+            } else {
+                break $ i
+            }
+        };
+        if _is_variation_selector(cp) { continue $ i + len };
+        if _is_combining_mark(cp)     { continue $ i + len };
+        if _is_emoji_modifier(cp)     { continue $ i + len };
+        break $ i
+    ))
+);
+
+_is_regional_indicator : U32 -> Bool;
+_is_regional_indicator = |cp| cp >= 0x1F1E6_U32 && cp <= 0x1F1FF_U32;
+
+_is_combining_mark : U32 -> Bool;
+_is_combining_mark = |cp| _in_pair_ranges(Table::combining_ranges, cp);
+
+_is_variation_selector : U32 -> Bool;
+_is_variation_selector = |cp| _in_pair_ranges(Table::variation_selector_ranges, cp);
+
+_is_emoji_modifier : U32 -> Bool;
+_is_emoji_modifier = |cp| cp >= 0x1F3FB_U32 && cp <= 0x1F3FF_U32;
+
+_is_emoji_presentation_or_pict : U32 -> Bool;
+_is_emoji_presentation_or_pict = |cp| (
+    let arr = Table::emoji_ranges;
+    let n = arr.get_size;
+    loop(0, |i| (
+        if i >= n { break $ false };
+        let (s, e, p) = arr.@(i);
+        if cp >= s && cp <= e {
+            match p {
+                emoji_presentation() => break $ true,
+                extended_pict()      => break $ true,
+                _                    => continue $ i + 1
+            }
+        };
+        continue $ i + 1
+    ))
+);
+
+// ---- helpers ----
+
+_in_pair_ranges : Array (U32, U32) -> U32 -> Bool;
+_in_pair_ranges = |arr, cp| (
+    let n = arr.get_size;
+    loop(0, |i| (
+        if i >= n { break $ false };
+        let (s, e) = arr.@(i);
+        if cp >= s && cp <= e { break $ true };
+        continue $ i + 1
+    ))
+);
+
+_to_bytes_g : String -> Array U8;
+_to_bytes_g = |s| (
+    let bs = s.get_bytes;
+    let n = bs.get_size;
+    if n == 0 { [] } else {
+        if bs.@(n - 1) == 0_U8 {
+            Array::from_map(n - 1, |i| bs.@(i))
+        } else {
+            bs
+        }
+    }
+);
+
+_slice_string : Array U8 -> I64 -> I64 -> String;
+_slice_string = |bs, start, end_excl| (
+    let len = end_excl - start;
+    if len <= 0 { "" };
+    let slice = Array::from_map(len, |i| bs.@(start + i));
+    String::_unsafe_from_c_str(slice.push_back(0_U8))
+);
+
+_decode_at : Array U8 -> I64 -> (U32, I64);
+_decode_at = |bs, i| (
+    let n = bs.get_size;
+    if i >= n { (0_U32, 0) };
+    let b0 = bs.@(i);
+    if b0 < 128_U8 { (b0.to_U32, 1) };
+    if b0 >= 192_U8 && b0 <= 223_U8 && i + 1 < n {
+        let b1 = bs.@(i + 1);
+        let v = (b0.bit_and(31_U8).to_U32).shift_left(6_U32)
+                .bit_or(b1.bit_and(63_U8).to_U32);
+        (v, 2)
+    } else if b0 >= 224_U8 && b0 <= 239_U8 && i + 2 < n {
+        let b1 = bs.@(i + 1);
+        let b2 = bs.@(i + 2);
+        let v = (b0.bit_and(15_U8).to_U32).shift_left(12_U32)
+                .bit_or((b1.bit_and(63_U8).to_U32).shift_left(6_U32))
+                .bit_or(b2.bit_and(63_U8).to_U32);
+        (v, 3)
+    } else if b0 >= 240_U8 && b0 <= 247_U8 && i + 3 < n {
+        let b1 = bs.@(i + 1);
+        let b2 = bs.@(i + 2);
+        let b3 = bs.@(i + 3);
+        let v = (b0.bit_and(7_U8).to_U32).shift_left(18_U32)
+                .bit_or((b1.bit_and(63_U8).to_U32).shift_left(12_U32))
+                .bit_or((b2.bit_and(63_U8).to_U32).shift_left(6_U32))
+                .bit_or(b3.bit_and(63_U8).to_U32);
+        (v, 4)
+    } else {
+        (0_U32, 1)
+    }
+);

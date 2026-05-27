@@ -1,0 +1,89 @@
+// Spinner widget: a small animated icon plus an optional label.
+//
+// Each preset has frames of equal display width so a scrolling diff
+// only ever needs to redraw the spinner's cell.
+module Yaynu.Tui.Widget.Spinner;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+
+type Spinner = box struct {
+    frames      : Array String,
+    frame_index : I64,
+    style       : Style,
+    label       : Option String
+};
+
+namespace Spinner {
+
+    _make : Array String -> Spinner;
+    _make = |fs| Spinner {
+        frames      : fs,
+        frame_index : 0,
+        style       : Style::default,
+        label       : Option::none()
+    };
+
+    dots : Spinner;
+    dots = _make([
+        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+    ]);
+
+    line : Spinner;
+    line = _make(["-", "\\", "|", "/"]);
+
+    ball : Spinner;
+    ball = _make(["◐", "◓", "◑", "◒"]);
+
+    arrows : Spinner;
+    arrows = _make(["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]);
+
+    clock : Spinner;
+    clock = _make([
+        "🕐", "🕑", "🕒", "🕓", "🕔", "🕕",
+        "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"
+    ]);
+
+    box_bounce : Spinner;
+    box_bounce = _make(["▖", "▘", "▝", "▗"]);
+
+    // A playful preset: pear cradled in hands. Two glyphs per frame
+    // arranged so each frame has display width 2.
+    pear_hands : Spinner;
+    pear_hands = _make(["🤲", "🍐", "🤲", "🍐"]);
+
+    tick : Spinner -> Spinner;
+    tick = |s| (
+        let n = s.@frames.get_size;
+        if n == 0 { s } else {
+            let next = s.@frame_index + 1;
+            s.set_frame_index(if next >= n { 0 } else { next })
+        }
+    );
+
+    with_label : String -> Spinner -> Spinner;
+    with_label = |l, s| s.set_label(Option::some(l));
+}
+
+namespace Frame {
+
+    render_spinner : Spinner -> Rect -> Frame -> Frame;
+    render_spinner = |s, rect, frame| (
+        if rect.is_empty { frame };
+        let n = s.@frames.get_size;
+        if n == 0 { frame };
+        let idx = if s.@frame_index < 0 || s.@frame_index >= n { 0 } else { s.@frame_index };
+        let f = s.@frames.@(idx);
+        let body = match s.@label {
+            none() => f,
+            some(l) => f + " " + l
+        };
+        let truncated = Width::truncate(rect.@width, body);
+        frame.mod_buffer(|buf|
+            Buffer::set_string(rect.@x, rect.@y, truncated, s.@style, buf)
+        )
+    );
+}

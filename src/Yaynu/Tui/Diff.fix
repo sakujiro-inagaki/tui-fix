@@ -1,0 +1,99 @@
+// Diff two Buffers and produce the minimal ANSI sequence to
+// transition the terminal display from the previous to the next
+// buffer.
+//
+// Strategy: per-row leftmost-to-rightmost diff. At most one cursor
+// positioning escape per changed row. Style transitions emit an SGR
+// escape between cells. A final reset escape closes the output
+// whenever anything was emitted.
+//
+// State across rows: SGR state persists in the terminal across CUP
+// (cursor positioning) escapes, so the diff threads the "active"
+// Style through every row's emission. If row N's last emitted cell
+// was reverse-styled and row N+1's first changed cell is default-
+// styled, we still need an SGR-reset between them or the new cell
+// inherits the previous row's reverse attribute.
+module Yaynu.Tui.Diff;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Style;
+import Yaynu.Term.Ansi;
+
+diff_to_ansi : Buffer -> Buffer -> String;
+diff_to_ansi = |prev, next| (
+    if prev.@width != next.@width || prev.@height != next.@height {
+        _full_redraw(next)
+    } else {
+        let h = next.@height;
+        let w = next.@width;
+        let quad = loop(([], false, 0, Style::default), |(acc, any, y, active)| (
+            if y >= h { break $ (acc, any, y, active) };
+            let lo = loop(0, |x| (
+                if x >= w { break $ -1 };
+                let pc = prev.@cells.@(y * w + x);
+                let nc = next.@cells.@(y * w + x);
+                if !Cell::eq_cell(pc, nc) { break $ x };
+                continue $ x + 1
+            ));
+            if lo == -1 { continue $ (acc, any, y + 1, active) };
+            let hi = loop(w - 1, |x| (
+                if x < lo { break $ x };
+                let pc = prev.@cells.@(y * w + x);
+                let nc = next.@cells.@(y * w + x);
+                if !Cell::eq_cell(pc, nc) { break $ x };
+                continue $ x - 1
+            ));
+            let (row_str, new_active) = _emit_row(next, y, lo, hi, active);
+            continue $ (acc.push_back(row_str), true, y + 1, new_active)
+        ));
+        let parts = quad.@0;
+        let any_emitted = quad.@1;
+        if any_emitted {
+            parts.to_iter.concat_iter + Ansi::reset
+        } else {
+            ""
+        }
+    }
+);
+
+// Emit CUP(y+1, lo+1) followed by cells [lo, hi] on row `y`, inserting
+// SGR style-change escapes when the per-cell style differs from the
+// running active style. Returns the row's bytes plus the new active
+// style for the next row's emission.
+_emit_row : Buffer -> I64 -> I64 -> I64 -> Style -> (String, Style);
+_emit_row = |buf, y, lo, hi, active_in| (
+    let w = buf.@width;
+    let head = Ansi::move_to(y + 1, lo + 1);
+    let (body, final_active) = loop(("", active_in, lo), |(out, active, x)| (
+        if x > hi { break $ (out, active) };
+        let cell = buf.@cells.@(y * w + x);
+        let need_sgr = !Style::eq_style(cell.@style, active);
+        let sgr = if need_sgr {
+            Ansi::reset + Style::to_sgr(cell.@style)
+        } else { "" };
+        continue $ (out + sgr + cell.@ch, cell.@style, x + 1)
+    ));
+    (head + body, final_active)
+);
+
+_full_redraw : Buffer -> String;
+_full_redraw = |buf| (
+    let h = buf.@height;
+    let w = buf.@width;
+    let (parts, _) = loop(([], Style::default, 0), |(acc, active, y)| (
+        if y >= h { break $ (acc, active) };
+        let head = Ansi::move_to(y + 1, 1);
+        let (body, new_active) = loop(("", active, 0), |(out, act, x)| (
+            if x >= w { break $ (out, act) };
+            let cell = buf.@cells.@(y * w + x);
+            let need_sgr = !Style::eq_style(cell.@style, act);
+            let sgr = if need_sgr {
+                Ansi::reset + Style::to_sgr(cell.@style)
+            } else { "" };
+            continue $ (out + sgr + cell.@ch, cell.@style, x + 1)
+        ));
+        continue $ (acc.push_back(head + body), new_active, y + 1)
+    ));
+    Ansi::clear_screen + parts.to_iter.concat_iter + Ansi::reset
+);

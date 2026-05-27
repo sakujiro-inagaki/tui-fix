@@ -1,0 +1,152 @@
+// Style and Color types.
+//
+// `Style` is a plain struct with optional foreground / background and
+// boolean attribute flags. `Color` is a union over the three colour
+// spaces we support: 256-indexed, 24-bit RGB, and the named 16-colour
+// palette (re-exported from `Yaynu.Term.Ansi`).
+//
+// Helpers `set_fg`, `set_bg`, `set_bold`, etc. return modified copies
+// so callers can chain (`Style::default.set_fg(c).set_bold(true)`).
+module Yaynu.Tui.Style;
+
+import Yaynu.Term.Ansi;
+
+type Color = box union {
+    indexed : U8,
+    rgb     : (U8, U8, U8),
+    named   : Yaynu.Term.Ansi::Color16
+};
+
+type Style = box struct {
+    fg        : Option Color,
+    bg        : Option Color,
+    bold      : Bool,
+    underline : Bool,
+    italic    : Bool,
+    reverse   : Bool,
+    dim       : Bool
+};
+
+namespace Style {
+
+    default : Style;
+    default = Style {
+        fg        : Option::none(),
+        bg        : Option::none(),
+        bold      : false,
+        underline : false,
+        italic    : false,
+        reverse   : false,
+        dim       : false
+    };
+
+    // Convenience: wrap a Color in `Some` and set the field. Reading
+    // back the field still uses `@fg : Option Color` — the wrapping
+    // is asymmetric on purpose, mirroring ratatui's `fg(Color)` /
+    // `bg(Color)` builders.
+    with_fg : Color -> Style -> Style;
+    with_fg = |c, s| s.set_fg(Option::some(c));
+
+    with_bg : Color -> Style -> Style;
+    with_bg = |c, s| s.set_bg(Option::some(c));
+}
+
+// Structural equality on Style.
+eq_style : Style -> Style -> Bool;
+eq_style = |a, b| (
+    a.@bold == b.@bold
+    && a.@underline == b.@underline
+    && a.@italic == b.@italic
+    && a.@reverse == b.@reverse
+    && a.@dim == b.@dim
+    && eq_color_opt(a.@fg, b.@fg)
+    && eq_color_opt(a.@bg, b.@bg)
+);
+
+eq_color_opt : Option Color -> Option Color -> Bool;
+eq_color_opt = |a, b| (
+    match a {
+        none() => (match b { none() => true, some(_) => false }),
+        some(ca) => (match b { none() => false, some(cb) => eq_color(ca, cb) })
+    }
+);
+
+eq_color : Color -> Color -> Bool;
+eq_color = |a, b| (
+    match a {
+        indexed(na) => (match b { indexed(nb) => na == nb, _ => false }),
+        rgb((r1, g1, b1)) => (match b {
+            rgb((r2, g2, b2)) => r1 == r2 && g1 == g2 && b1 == b2,
+            _ => false
+        }),
+        named(na) => (match b {
+            named(nb) => _eq_color16(na, nb),
+            _ => false
+        })
+    }
+);
+
+_eq_color16 : Yaynu.Term.Ansi::Color16 -> Yaynu.Term.Ansi::Color16 -> Bool;
+_eq_color16 = |a, b| _color16_index(a) == _color16_index(b);
+
+_color16_index : Yaynu.Term.Ansi::Color16 -> I64;
+_color16_index = |c| (
+    match c {
+        black()          =>  0,
+        red()            =>  1,
+        green()          =>  2,
+        yellow()         =>  3,
+        blue()           =>  4,
+        magenta()        =>  5,
+        cyan()           =>  6,
+        white()          =>  7,
+        bright_black()   =>  8,
+        bright_red()     =>  9,
+        bright_green()   => 10,
+        bright_yellow()  => 11,
+        bright_blue()    => 12,
+        bright_magenta() => 13,
+        bright_cyan()    => 14,
+        bright_white()   => 15
+    }
+);
+
+// Render this style as a sequence of SGR escapes that, when written
+// after a CSI 0m reset, produces a terminal in this style. Empty
+// string when the style has no non-default attribute.
+to_sgr : Style -> String;
+to_sgr = |s| (
+    let parts = [];
+    let parts = if s.@bold      { parts.push_back(Ansi::bold)      } else { parts };
+    let parts = if s.@dim       { parts.push_back(Ansi::dim)       } else { parts };
+    let parts = if s.@italic    { parts.push_back(Ansi::italic)    } else { parts };
+    let parts = if s.@underline { parts.push_back(Ansi::underline) } else { parts };
+    let parts = if s.@reverse   { parts.push_back(Ansi::reverse)   } else { parts };
+    let parts = match s.@fg {
+        none() => parts,
+        some(c) => parts.push_back(_fg_sgr(c))
+    };
+    let parts = match s.@bg {
+        none() => parts,
+        some(c) => parts.push_back(_bg_sgr(c))
+    };
+    parts.to_iter.concat_iter
+);
+
+_fg_sgr : Color -> String;
+_fg_sgr = |c| (
+    match c {
+        indexed(n)    => Ansi::fg_color_256(n),
+        rgb((r,g,b))  => Ansi::fg_color_rgb(r, g, b),
+        named(c16)    => Ansi::fg_color_16(c16)
+    }
+);
+
+_bg_sgr : Color -> String;
+_bg_sgr = |c| (
+    match c {
+        indexed(n)    => Ansi::bg_color_256(n),
+        rgb((r,g,b))  => Ansi::bg_color_rgb(r, g, b),
+        named(c16)    => Ansi::bg_color_16(c16)
+    }
+);

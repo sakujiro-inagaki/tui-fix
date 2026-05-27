@@ -1,0 +1,172 @@
+// input_demo.fix — single-line + multi-line input demo with a
+// visible submit history so the user can see exactly what each key
+// does.
+//
+// Layout (top to bottom):
+//   row 0   help line
+//   rows 2  current focus indicator
+//   row 3   single-line input
+//   row 4   multi-line indicator
+//   rows 5..8  multi-line input (4 rows)
+//   rows 10..  submit history (most recent at top)
+//
+// Keys:
+//   Tab     switch focus between the two boxes
+//   Enter   - in single-line: clears the box, appends to history
+//             prefixed with "single>"
+//           - in multi-line: inserts `\n` (per spec D9)
+//   Ctrl+D  in multi-line: clears the box, appends to history
+//           prefixed with "multi>" (newlines shown as `\n`)
+//   Esc     quit
+//
+// The history view is the *visible* feedback for "Enter worked". The
+// run loop returns IOFail () so we cannot hand the captured text back
+// to main; this on-screen history is the substitute.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.Input;
+import Yaynu.Term.Key;
+
+type Focus = box union { focus_single : (), focus_multi : () };
+
+type Demo = box struct {
+    single  : Input,
+    multi   : Input,
+    focus   : Focus,
+    history : Array String   // most-recent-first
+};
+
+_make_single : Input;
+_make_single = Input::new.with_placeholder("type, press Enter to submit");
+
+_make_multi : Input;
+_make_multi = Input::new
+    .with_placeholder("type; Enter=newline, Ctrl+D=submit")
+    .with_multi_line(true);
+
+impl Demo : TuiApp {
+    initial = Demo {
+        single  : _make_single,
+        multi   : _make_multi,
+        focus   : Focus::focus_single(),
+        history : []
+    };
+    view = |s, frame| (
+        let r = frame.@size;
+        let line = |i| Rect::make(r.@x, r.@y + i, r.@width, 1);
+        let multi_rect = Rect::make(r.@x, r.@y + 5, r.@width, 4);
+        let on_single = match s.@focus { focus_single() => true, focus_multi() => false };
+        let single_label = if on_single { "[*] single-line:" } else { "[ ] single-line:" };
+        let multi_label  = if on_single { "[ ] multi-line: " } else { "[*] multi-line: " };
+        let dim = Style::default.set_dim(true);
+        // Hide the cursor on the unfocused input by zero-ing its
+        // cursor style. The cell still gets overwritten but with the
+        // default style so it does not visually pop.
+        let single_for_view = if on_single { s.@single } else { s.@single.set_cursor_style(Style::default) };
+        let multi_for_view  = if on_single { s.@multi.set_cursor_style(Style::default) } else { s.@multi };
+        let f = frame
+            .render_text(
+                "Tab=switch  Enter=submit/newline  Ctrl+D=submit (multi)  Esc=quit",
+                dim, line(0)
+            )
+            .render_text(single_label, Style::default, line(2))
+            .render_input(single_for_view, line(3))
+            .render_text(multi_label, Style::default, line(4))
+            .render_input(multi_for_view, multi_rect)
+            .render_text("--- submit history ---", dim, line(9));
+        // History list: render the most recent items, one per row,
+        // stopping when we run out of vertical space.
+        let history_top = 10;
+        let max_rows = r.@height - history_top;
+        loop((f, 0), |(f, i)| (
+            if i >= max_rows { break $ f };
+            if i >= s.@history.get_size { break $ f };
+            let row = s.@history.@(i);
+            continue $ (f.render_text(row, Style::default, line(history_top + i)), i + 1)
+        ))
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    tab() => UpdateResult::continue(
+                        s.set_focus(match s.@focus {
+                            focus_single() => Focus::focus_multi(),
+                            focus_multi()  => Focus::focus_single()
+                        })
+                    ),
+                    ctrl(c) => (
+                        if c == "d" {
+                            // Submit the multi-line input regardless of focus.
+                            let entry = "multi> " + _show_newlines(s.@multi.text);
+                            UpdateResult::continue(
+                                s.set_multi(_make_multi)
+                                 .set_history([entry].append(s.@history))
+                            )
+                        } else if c == "c" {
+                            // Captured by the run loop's force-quit; passing
+                            // through here is a no-op for safety.
+                            UpdateResult::continue(s)
+                        } else {
+                            UpdateResult::continue(s)
+                        }
+                    ),
+                    _ => (
+                        match s.@focus {
+                            focus_single() => (
+                                match k {
+                                    enter() => (
+                                        let text = s.@single.text;
+                                        if text == "" {
+                                            UpdateResult::continue(s)
+                                        } else {
+                                            UpdateResult::continue(
+                                                s.set_single(_make_single)
+                                                 .set_history(["single> " + text].append(s.@history))
+                                            )
+                                        }
+                                    ),
+                                    _ => UpdateResult::continue(s.set_single(s.@single.handle_key(k)))
+                                }
+                            ),
+                            focus_multi() => (
+                                UpdateResult::continue(s.set_multi(s.@multi.handle_key(k)))
+                            )
+                        }
+                    )
+                }
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+// Render newlines as literal `\n` so the multi-line submit appears as
+// a single line in the history.
+_show_newlines : String -> String;
+_show_newlines = |s| (
+    let parts = s.split("\n").to_array;
+    let n = parts.get_size;
+    let (out, _) = parts.to_iter.fold(("", 0), |ln, (acc, i)| (
+        let next = if i + 1 < n { acc + ln + "\\n" } else { acc + ln };
+        (next, i + 1)
+    ));
+    out
+);
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);

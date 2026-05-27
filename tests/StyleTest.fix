@@ -1,0 +1,24 @@
+module StyleTest;
+
+import Yaynu.Tui.Style;
+import Yaynu.Term.Ansi;
+
+run : IO ();
+run = (
+    let d = Style::default;
+    assert_eq(|_|"default fg is none", d.@fg.is_some, false);;
+    assert_eq(|_|"default bg is none", d.@bg.is_some, false);;
+    assert_eq(|_|"default bold", d.@bold, false);;
+    assert_eq(|_|"default underline", d.@underline, false);;
+    assert_eq(|_|"default italic", d.@italic, false);;
+    assert_eq(|_|"default reverse", d.@reverse, false);;
+    assert_eq(|_|"default dim", d.@dim, false);;
+    let s = d.with_fg(Color::indexed(9_U8)).set_bold(true);
+    assert_eq(|_|"fluent bold", s.@bold, true);;
+    assert_eq(|_|"fluent fg is some", s.@fg.is_some, true);;
+    assert_eq(|_|"fluent other underline stays false", s.@underline, false);;
+    // named re-exports Color16
+    let nc = Color::named(Color16::red());
+    assert_eq(|_|"named round-trips", eq_color(nc, Color::named(Color16::red())), true);;
+    pure()
+);

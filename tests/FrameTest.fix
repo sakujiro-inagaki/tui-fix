@@ -1,0 +1,25 @@
+module FrameTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+
+run : IO ();
+run = (
+    let f = Frame::new(Rect::make(0, 0, 20, 3));
+    let f2 = f.render_text("hi", Style::default, Rect::make(2, 1, 10, 1));
+    assert_eq(|_|"render_text h", Buffer::get_cell(2, 1, f2.@buffer).@ch, "h");;
+    assert_eq(|_|"render_text i", Buffer::get_cell(3, 1, f2.@buffer).@ch, "i");;
+    // truncation
+    let f3 = f.render_text("Hello, World", Style::default, Rect::make(0, 0, 5, 1));
+    assert_eq(|_|"truncate H", Buffer::get_cell(0, 0, f3.@buffer).@ch, "H");;
+    assert_eq(|_|"truncate o", Buffer::get_cell(4, 0, f3.@buffer).@ch, "o");;
+    assert_eq(|_|"trunc beyond", Buffer::get_cell(5, 0, f3.@buffer).@ch, " ");;
+    // only writes row 0
+    let f4 = f.render_text("abc", Style::default, Rect::make(0, 0, 10, 3));
+    assert_eq(|_|"only row 0 row0", Buffer::get_cell(0, 0, f4.@buffer).@ch, "a");;
+    assert_eq(|_|"only row 0 row1", Buffer::get_cell(0, 1, f4.@buffer).@ch, " ");;
+    pure()
+);

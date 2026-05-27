@@ -1,0 +1,386 @@
+// Input widget: an editable UTF-8 string with a cursor.
+module Yaynu.Tui.Widget.Input;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+import Yaynu.Tui.Width.Grapheme;
+import Yaynu.Term.Key;
+
+type Input = box struct {
+    text         : String,
+    cursor       : I64,                 // byte offset
+    placeholder  : String,
+    style        : Style,
+    cursor_style : Style,
+    multi_line   : Bool,
+    max_length   : Option I64
+};
+
+namespace Input {
+
+    new : Input;
+    new = Input {
+        text         : "",
+        cursor       : 0,
+        placeholder  : "",
+        style        : Style::default,
+        cursor_style : Style::default.set_reverse(true),
+        multi_line   : false,
+        max_length   : Option::none()
+    };
+
+    with_placeholder : String -> Input -> Input;
+    with_placeholder = |p, i| i.set_placeholder(p);
+
+    with_multi_line : Bool -> Input -> Input;
+    with_multi_line = |b, i| i.set_multi_line(b);
+
+    text : Input -> String;
+    text = |i| i.@text;
+
+    clear : Input -> Input;
+    clear = |i| i.set_text("").set_cursor(0);
+
+    handle_key : Key -> Input -> Input;
+    handle_key = |k, input| (
+        match k {
+            char(s) => _insert_string(s, input),
+            enter() => (
+                if input.@multi_line { _insert_string("\n", input) } else { input }
+            ),
+            backspace()   => _delete_grapheme_left(input),
+            delete_key()  => _delete_grapheme_right(input),
+            arrow_left()  => _move_left(input),
+            arrow_right() => _move_right(input),
+            arrow_up()    => if input.@multi_line { _move_vertical(input, -1) } else { input },
+            arrow_down()  => if input.@multi_line { _move_vertical(input, 1) } else { input },
+            home()        => _move_home(input),
+            end_key()     => _move_end(input),
+            _             => input
+        }
+    );
+}
+
+_insert_string : String -> Input -> Input;
+_insert_string = |s, input| (
+    let bs = _to_bytes_i(input.@text);
+    let new_text_bs = _to_bytes_i(input.@text + "");
+    // Check max_length.
+    let cur = input.@cursor;
+    let s_bs = _to_bytes_i(s);
+    let new_len = bs.get_size + s_bs.get_size;
+    let ok = match input.@max_length {
+        none() => true,
+        some(m) => new_len <= m
+    };
+    if !ok { input };
+    let prefix = _slice_i(bs, 0, cur);
+    let suffix = _slice_i(bs, cur, bs.get_size);
+    input.set_text(prefix + s + suffix).set_cursor(cur + s_bs.get_size)
+);
+
+_delete_grapheme_left : Input -> Input;
+_delete_grapheme_left = |input| (
+    let bs = _to_bytes_i(input.@text);
+    let cur = input.@cursor;
+    if cur <= 0 { input };
+    // Find grapheme-cluster boundary just before `cur`.
+    let prefix_bs = Array::from_map(cur, |i| bs.@(i));
+    let clusters = Grapheme::split_clusters(_slice_i(prefix_bs, 0, cur));
+    if clusters.get_size == 0 { input };
+    let last = clusters.@(clusters.get_size - 1);
+    let last_bs = _to_bytes_i(last);
+    let new_cur = cur - last_bs.get_size;
+    let prefix = _slice_i(bs, 0, new_cur);
+    let suffix = _slice_i(bs, cur, bs.get_size);
+    input.set_text(prefix + suffix).set_cursor(new_cur)
+);
+
+_delete_grapheme_right : Input -> Input;
+_delete_grapheme_right = |input| (
+    let bs = _to_bytes_i(input.@text);
+    let cur = input.@cursor;
+    if cur >= bs.get_size { input };
+    let suffix_str = _slice_i(bs, cur, bs.get_size);
+    let clusters = Grapheme::split_clusters(suffix_str);
+    if clusters.get_size == 0 { input };
+    let first = clusters.@(0);
+    let first_bs = _to_bytes_i(first);
+    let prefix = _slice_i(bs, 0, cur);
+    let suffix = _slice_i(bs, cur + first_bs.get_size, bs.get_size);
+    input.set_text(prefix + suffix)
+);
+
+_move_left : Input -> Input;
+_move_left = |input| (
+    let bs = _to_bytes_i(input.@text);
+    let cur = input.@cursor;
+    if cur <= 0 { input };
+    let prefix_bs = Array::from_map(cur, |i| bs.@(i));
+    let clusters = Grapheme::split_clusters(_slice_i(prefix_bs, 0, cur));
+    if clusters.get_size == 0 { input };
+    let last = clusters.@(clusters.get_size - 1);
+    let last_bs = _to_bytes_i(last);
+    input.set_cursor(cur - last_bs.get_size)
+);
+
+_move_right : Input -> Input;
+_move_right = |input| (
+    let bs = _to_bytes_i(input.@text);
+    let cur = input.@cursor;
+    if cur >= bs.get_size { input };
+    let suffix_str = _slice_i(bs, cur, bs.get_size);
+    let clusters = Grapheme::split_clusters(suffix_str);
+    if clusters.get_size == 0 { input };
+    let first = clusters.@(0);
+    let first_bs = _to_bytes_i(first);
+    input.set_cursor(cur + first_bs.get_size)
+);
+
+_move_home : Input -> Input;
+_move_home = |input| (
+    if !input.@multi_line { input.set_cursor(0) } else {
+        // Find start of current line.
+        let bs = _to_bytes_i(input.@text);
+        let cur = input.@cursor;
+        let start = loop(cur - 1, |i| (
+            if i < 0 { break $ 0 };
+            if bs.@(i) == 10_U8 { break $ i + 1 };
+            continue $ i - 1
+        ));
+        input.set_cursor(start)
+    }
+);
+
+_move_end : Input -> Input;
+_move_end = |input| (
+    let bs = _to_bytes_i(input.@text);
+    let n = bs.get_size;
+    if !input.@multi_line { input.set_cursor(n) } else {
+        let cur = input.@cursor;
+        let end = loop(cur, |i| (
+            if i >= n { break $ n };
+            if bs.@(i) == 10_U8 { break $ i };
+            continue $ i + 1
+        ));
+        input.set_cursor(end)
+    }
+);
+
+_move_vertical : Input -> I64 -> Input;
+_move_vertical = |input, delta| (
+    let bs = _to_bytes_i(input.@text);
+    let n = bs.get_size;
+    let cur = input.@cursor;
+    // Find current line start.
+    let line_start = loop(cur - 1, |i| (
+        if i < 0 { break $ 0 };
+        if bs.@(i) == 10_U8 { break $ i + 1 };
+        continue $ i - 1
+    ));
+    let col_bytes = cur - line_start;
+    if delta < 0 {
+        if line_start == 0 { input } else {
+            // Find previous line start.
+            let prev_end = line_start - 1;
+            let prev_start = loop(prev_end - 1, |i| (
+                if i < 0 { break $ 0 };
+                if bs.@(i) == 10_U8 { break $ i + 1 };
+                continue $ i - 1
+            ));
+            let prev_line_len = prev_end - prev_start;
+            let new_off = if col_bytes > prev_line_len { prev_line_len } else { col_bytes };
+            input.set_cursor(prev_start + new_off)
+        }
+    } else {
+        // Find current line end.
+        let cur_end = loop(line_start, |i| (
+            if i >= n { break $ n };
+            if bs.@(i) == 10_U8 { break $ i };
+            continue $ i + 1
+        ));
+        if cur_end >= n { input } else {
+            let next_start = cur_end + 1;
+            let next_end = loop(next_start, |i| (
+                if i >= n { break $ n };
+                if bs.@(i) == 10_U8 { break $ i };
+                continue $ i + 1
+            ));
+            let next_line_len = next_end - next_start;
+            let new_off = if col_bytes > next_line_len { next_line_len } else { col_bytes };
+            input.set_cursor(next_start + new_off)
+        }
+    }
+);
+
+// ---- rendering ----
+
+namespace Frame {
+
+    render_input : Input -> Rect -> Frame -> Frame;
+    render_input = |inp, rect, frame| (
+        if rect.is_empty { frame };
+        if inp.@multi_line { _render_multi(inp, rect, frame) } else { _render_single(inp, rect, frame) }
+    );
+}
+
+_render_single : Input -> Rect -> Frame -> Frame;
+_render_single = |inp, rect, frame| (
+    let is_empty = inp.@text == "";
+    let body = if is_empty { inp.@placeholder } else { inp.@text };
+    let body_style = if is_empty {
+        inp.@style.set_dim(true)
+    } else { inp.@style };
+    let truncated = Width::truncate(rect.@width, body);
+    let f = frame.mod_buffer(|buf|
+        Buffer::set_string(rect.@x, rect.@y, truncated, body_style, buf)
+    );
+    // Cursor cell: visible at current cursor's display column.
+    let bs = _to_bytes_i(inp.@text);
+    let prefix_str = _slice_i(bs, 0, inp.@cursor);
+    let cx = Width::string_width(prefix_str);
+    if cx >= rect.@width { f } else {
+        let cell_ch = if cx < Width::string_width(truncated) {
+            // Get the cluster at column cx.
+            _cluster_at_col(truncated, cx)
+        } else { " " };
+        // Merge the underlying body style with cursor_style so that
+        // placeholder attributes (e.g. dim) are preserved under the
+        // cursor block.
+        let cell_style = _merge_style(body_style, inp.@cursor_style);
+        f.mod_buffer(|buf|
+            Buffer::set_cell(rect.@x + cx, rect.@y, Cell { ch : cell_ch, style : cell_style }, buf)
+        )
+    }
+);
+
+_render_multi : Input -> Rect -> Frame -> Frame;
+_render_multi = |inp, rect, frame| (
+    let is_empty = inp.@text == "";
+    // Body rendering — either the text or, if empty, the placeholder
+    // dim'd. The placeholder occupies row 0 only; the rest of the
+    // rect is left blank.
+    let f = if is_empty {
+        let placeholder = Width::truncate(rect.@width, inp.@placeholder);
+        let ph_style = inp.@style.set_dim(true);
+        frame.mod_buffer(|buf|
+            Buffer::set_string(rect.@x, rect.@y, placeholder, ph_style, buf)
+        )
+    } else {
+        let lines = inp.@text.split("\n").to_array;
+        let max_rows = rect.@height;
+        let n_lines = lines.get_size;
+        let last = if n_lines > max_rows { max_rows } else { n_lines };
+        loop((frame, 0), |(f, i)| (
+            if i >= last { break $ f };
+            let truncated = Width::truncate(rect.@width, lines.@(i));
+            continue $ (
+                f.mod_buffer(|buf|
+                    Buffer::set_string(rect.@x, rect.@y + i, truncated, inp.@style, buf)
+                ),
+                i + 1
+            )
+        ))
+    };
+    // Cursor cell — find (cy, cx) from the byte offset by counting
+    // newlines before the cursor and measuring the width of the
+    // current line's prefix.
+    let bs = _to_bytes_i(inp.@text);
+    let cur = inp.@cursor;
+    let cur = if cur < 0 { 0 } else { if cur > bs.get_size { bs.get_size } else { cur } };
+    let pos = loop((0, 0, 0), |(li, ls, i)| (
+        if i >= cur { break $ (li, ls) };
+        if bs.@(i) == 10_U8 {
+            continue $ (li + 1, i + 1, i + 1)
+        };
+        continue $ (li, ls, i + 1)
+    ));
+    let cy = pos.@0;
+    let line_start = pos.@1;
+    let prefix_len = cur - line_start;
+    let prefix_str = _slice_i(bs, line_start, line_start + prefix_len);
+    let cx = Width::string_width(prefix_str);
+    // Cursor cell: pull the glyph that was *actually rendered* under
+    // the cursor (or " " if past line end). Using the displayed line
+    // — including the placeholder when text is empty — keeps the
+    // first character visible under the cursor block. Style is the
+    // underlying body style merged with `cursor_style` so placeholder
+    // dimness is preserved under the cursor.
+    if cy < 0 || cy >= rect.@height || cx < 0 || cx >= rect.@width { f } else {
+        let displayed_line = if is_empty {
+            if cy == 0 { inp.@placeholder } else { "" }
+        } else {
+            let lines = inp.@text.split("\n").to_array;
+            if cy < lines.get_size { lines.@(cy) } else { "" }
+        };
+        let line_w = Width::string_width(displayed_line);
+        let cell_ch = if cx < line_w { _cluster_at_col(displayed_line, cx) } else { " " };
+        let body_style = if is_empty { inp.@style.set_dim(true) } else { inp.@style };
+        let cell_style = _merge_style(body_style, inp.@cursor_style);
+        f.mod_buffer(|buf|
+            Buffer::set_cell(
+                rect.@x + cx, rect.@y + cy,
+                Cell { ch : cell_ch, style : cell_style },
+                buf
+            )
+        )
+    }
+);
+
+// Combine an underlying cell style with the cursor_style overlay.
+// fg/bg from cursor_style win when set, otherwise fall through to
+// the underlying. Boolean attributes are OR'd so that, e.g., the
+// dim placeholder remains dim under a reverse-video cursor block.
+_merge_style : Style -> Style -> Style;
+_merge_style = |under, cursor| (
+    Style {
+        fg        : (match cursor.@fg { some(c) => Option::some(c), none() => under.@fg }),
+        bg        : (match cursor.@bg { some(c) => Option::some(c), none() => under.@bg }),
+        bold      : under.@bold || cursor.@bold,
+        underline : under.@underline || cursor.@underline,
+        italic    : under.@italic || cursor.@italic,
+        reverse   : under.@reverse || cursor.@reverse,
+        dim       : under.@dim || cursor.@dim
+    }
+);
+
+_cluster_at_col : String -> I64 -> String;
+_cluster_at_col = |s, col| (
+    let cs = Grapheme::split_clusters(s);
+    let (out, _) = loop(("", 0, 0), |(_, used, i)| (
+        if i >= cs.get_size { break $ ("", used) };
+        let c = cs.@(i);
+        let w = Width::char_width(c);
+        if used == col { break $ (c, used) };
+        if used > col { break $ ("", used) };
+        continue $ ("", used + w, i + 1)
+    ));
+    out
+);
+
+// ---- helpers ----
+
+_to_bytes_i : String -> Array U8;
+_to_bytes_i = |s| (
+    let bs = s.get_bytes;
+    let n = bs.get_size;
+    if n == 0 { [] } else {
+        if bs.@(n - 1) == 0_U8 {
+            Array::from_map(n - 1, |i| bs.@(i))
+        } else {
+            bs
+        }
+    }
+);
+
+_slice_i : Array U8 -> I64 -> I64 -> String;
+_slice_i = |bs, start, end_excl| (
+    let len = end_excl - start;
+    if len <= 0 { "" };
+    let slice = Array::from_map(len, |i| bs.@(start + i));
+    String::_unsafe_from_c_str(slice.push_back(0_U8))
+);

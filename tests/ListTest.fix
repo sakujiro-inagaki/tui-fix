@@ -1,0 +1,34 @@
+module ListTest;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Widget.List;
+import Yaynu.Term.Key;
+
+run : IO ();
+run = (
+    let items : Array (ListItem String) = ["alpha", "beta", "gamma"].to_iter.map(|s| ListItem::new(s, s)).to_array;
+    let l = List::new(items).with_selected(1).with_highlight_symbol("> ");
+    // selected_value
+    assert_eq(|_|"selected_value some", l.selected_value, Option::some("beta"));;
+    let l_no_sel = List::new(items);
+    assert_eq(|_|"selected_value none", l_no_sel.selected_value, Option::none());;
+    // handle_key
+    let l2 = l.with_selected(0).handle_key(Key::arrow_down());
+    assert_eq(|_|"down advances", l2.@selected, Option::some(1));;
+    let l3 = l.with_selected(2).handle_key(Key::arrow_down());
+    assert_eq(|_|"down at end stays", l3.@selected, Option::some(2));;
+    // render highlight on selected row.
+    let f = Frame::new(Rect::make(0, 0, 20, 5));
+    let f2 = f.render_list(l, Rect::make(0, 0, 10, 3));
+    // Row 1 selected with "> beta"
+    assert_eq(|_|"row1 prefix >", Buffer::get_cell(0, 1, f2.@buffer).@ch, ">");;
+    assert_eq(|_|"row1 prefix space", Buffer::get_cell(1, 1, f2.@buffer).@ch, " ");;
+    assert_eq(|_|"row1 b", Buffer::get_cell(2, 1, f2.@buffer).@ch, "b");;
+    // Row 0 has the two-space blanks then "alpha"
+    assert_eq(|_|"row0 blank0", Buffer::get_cell(0, 0, f2.@buffer).@ch, " ");;
+    assert_eq(|_|"row0 a", Buffer::get_cell(2, 0, f2.@buffer).@ch, "a");;
+    pure()
+);

@@ -1,0 +1,75 @@
+// layout_demo.fix — Tabs on top, status bar at bottom, middle split
+// into a list (left) and a paragraph (right).
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.List;
+import Yaynu.Tui.Widget.Tabs;
+import Yaynu.Tui.Widget.Paragraph;
+import Yaynu.Term.Key;
+
+type Demo = box struct {
+    tabs : Tabs,
+    list : List String
+};
+
+impl Demo : TuiApp {
+    initial = (
+        let titles = ["Mail", "Chat", "Help"];
+        let items : Array (ListItem String) = ["Inbox", "Sent", "Drafts", "Spam", "Trash"].to_iter
+            .map(|s| ListItem::new(s, s)).to_array;
+        Demo {
+            tabs : Tabs::new(titles),
+            list : List::new(items).with_selected(0).with_highlight_symbol("> ")
+        }
+    );
+    view = |s, frame| (
+        let r = frame.@size;
+        let rows = Rect::split_vertical([
+            Constraint::fixed(1),
+            Constraint::fill(1),
+            Constraint::fixed(1)
+        ], r);
+        let top = rows.@(0);
+        let mid = rows.@(1);
+        let bot = rows.@(2);
+        let cols = Rect::split_horizontal([Constraint::fixed(20), Constraint::fill(1)], mid);
+        let left = cols.@(0);
+        let right = cols.@(1);
+        frame
+            .render_tabs(s.@tabs, top)
+            .render_list(s.@list, left)
+            .render_paragraph(
+                Paragraph::new("Main content goes here. Try Tab to change top tabs and arrows to navigate the list.").with_wrap(WrapMode::word()),
+                right
+            )
+            .render_text("Tab=switch tab, arrows=move list, Esc=quit", Style::default.set_dim(true), bot)
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    tab()    => UpdateResult::continue(s.set_tabs(s.@tabs.next)),
+                    _        => UpdateResult::continue(s.set_list(s.@list.handle_key(k)))
+                }
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);

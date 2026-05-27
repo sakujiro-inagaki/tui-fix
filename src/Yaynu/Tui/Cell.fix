@@ -1,0 +1,25 @@
+// A single screen cell.
+//
+// `ch` is the UTF-8 bytes of one grapheme cluster. A "wide" cluster
+// occupies the leftmost cell; the cell immediately to its right is
+// a continuation marker with `ch = ""` and the same style.
+module Yaynu.Tui.Cell;
+
+import Yaynu.Tui.Style;
+
+type Cell = struct {
+    ch    : String,
+    style : Style
+};
+
+namespace Cell {
+
+    blank : Cell;
+    blank = Cell { ch : " ", style : Style::default };
+
+    continuation : Style -> Cell;
+    continuation = |s| Cell { ch : "", style : s };
+}
+
+eq_cell : Cell -> Cell -> Bool;
+eq_cell = |a, b| a.@ch == b.@ch && eq_style(a.@style, b.@style);

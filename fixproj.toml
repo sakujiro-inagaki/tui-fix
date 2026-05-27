@@ -1,0 +1,56 @@
+[general]
+name = "tui"
+version = "0.1.0"
+fix_version = "1.3.0"
+description = "Yaynu.Tui — immediate-mode TUI widget toolkit on top of term"
+license = "MIT"
+
+[build]
+files = [
+    "src/Yaynu/Tui.fix",
+    "src/Yaynu/Tui/Style.fix",
+    "src/Yaynu/Tui/Rect.fix",
+    "src/Yaynu/Tui/Cell.fix",
+    "src/Yaynu/Tui/Buffer.fix",
+    "src/Yaynu/Tui/Frame.fix",
+    "src/Yaynu/Tui/Diff.fix",
+    "src/Yaynu/Tui/Event.fix",
+    "src/Yaynu/Tui/Width.fix",
+    "src/Yaynu/Tui/Width/Table.fix",
+    "src/Yaynu/Tui/Width/Grapheme.fix",
+    "src/Yaynu/Tui/Widget/Border.fix",
+    "src/Yaynu/Tui/Widget/Paragraph.fix",
+    "src/Yaynu/Tui/Widget/List.fix",
+    "src/Yaynu/Tui/Widget/Input.fix",
+    "src/Yaynu/Tui/Widget/Tabs.fix",
+    "src/Yaynu/Tui/Widget/Spinner.fix",
+    "src/Yaynu/Tui/Widget/Progress.fix",
+]
+
+[build.test]
+files = [
+    "tests/Test.fix",
+    "tests/StyleTest.fix",
+    "tests/WidthTest.fix",
+    "tests/BufferTest.fix",
+    "tests/FrameTest.fix",
+    "tests/DiffTest.fix",
+    "tests/RectTest.fix",
+    "tests/BorderTest.fix",
+    "tests/ParagraphTest.fix",
+    "tests/ListTest.fix",
+    "tests/InputTest.fix",
+    "tests/TabsTest.fix",
+    "tests/SpinnerTest.fix",
+    "tests/ProgressTest.fix",
+]
+
+static_links = ["tui_shim"]
+library_paths = ["c_src"]
+
+preliminary_commands = [["sh", "scripts/build_shim.sh"]]
+
+[[dependencies]]
+name = "term"
+version = "*"
+git = { url = "https://github.com/sakujiro-inagaki/term-fix.git" }

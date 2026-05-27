@@ -1,0 +1,42 @@
+// Frame: a Buffer plus the terminal size.
+//
+// Widget rendering calls (`render_text`, `render_border`, ...) are
+// methods on Frame so they can be chained inside an app's `view`.
+module Yaynu.Tui.Frame;
+
+import Yaynu.Tui.Buffer;
+import Yaynu.Tui.Cell;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Width;
+
+type Frame = box struct {
+    size   : Rect,
+    buffer : Buffer
+};
+
+namespace Frame {
+
+    new : Rect -> Frame;
+    new = |r| (
+        Frame {
+            size   : r,
+            buffer : Buffer::empty(r.@width, r.@height)
+        }
+    );
+
+    // Render a styled string at the rect's top-left, truncating to
+    // the rect's width and only writing into the rect's first row.
+    render_text : String -> Style -> Rect -> Frame -> Frame;
+    render_text = |text, style, rect, frame| (
+        if rect.is_empty { frame };
+        let truncated = Width::truncate(rect.@width, text);
+        frame.mod_buffer(|b|
+            Buffer::set_string(rect.@x, rect.@y, truncated, style, b)
+        )
+    );
+
+    // Fill a sub-rect of the frame's buffer with a cell value.
+    fill : Rect -> Cell -> Frame -> Frame;
+    fill = |rect, c, frame| frame.mod_buffer(|b| Buffer::fill(rect, c, b));
+}

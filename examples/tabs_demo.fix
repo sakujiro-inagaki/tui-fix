@@ -1,0 +1,60 @@
+// tabs_demo.fix — three tabs, Tab/Shift+Tab cycles, Esc quits.
+//
+// Note: most terminals do not deliver Shift+Tab as a distinct key
+// (it usually shows up as `Esc [ Z`). We cycle backwards on the
+// `BackTab` parse (which `term` does NOT model in v0.1), so we
+// instead use `[` to cycle back as a substitute.
+module Main;
+
+import Yaynu.Tui;
+import Yaynu.Tui.Event;
+import Yaynu.Tui.Frame;
+import Yaynu.Tui.Rect;
+import Yaynu.Tui.Style;
+import Yaynu.Tui.Widget.Tabs;
+import Yaynu.Term.Key;
+
+type Demo = box struct { tabs : Tabs };
+
+impl Demo : TuiApp {
+    initial = Demo {
+        tabs : Tabs::new(["overview", "details", "logs"])
+    };
+    view = |s, frame| (
+        let r = frame.@size;
+        let bar = Rect::make(r.@x, r.@y, r.@width, 1);
+        let body = Rect::make(r.@x, r.@y + 2, r.@width, r.@height - 2);
+        let title = "tab " + s.@tabs.@selected.to_string + " contents — Tab=next, [=prev, Esc=quit";
+        frame
+            .render_tabs(s.@tabs, bar)
+            .render_text(title, Style::default, body)
+    );
+    update = |ev, s| (
+        match ev {
+            key(k) => (
+                match k {
+                    escape() => UpdateResult::quit(),
+                    tab()    => UpdateResult::continue(s.set_tabs(s.@tabs.next)),
+                    char(c)  => (
+                        if c == "[" {
+                            UpdateResult::continue(s.set_tabs(s.@tabs.prev))
+                        } else { UpdateResult::continue(s) }
+                    ),
+                    _ => UpdateResult::continue(s)
+                }
+            ),
+            _ => UpdateResult::continue(s)
+        }
+    );
+    tick_rate = |_| Option::none();
+}
+
+main : IO ();
+main = (
+    let initial_state : Demo = TuiApp::initial;
+    let r = *Yaynu.Tui::run(initial_state).to_result;
+    match r {
+        ok(_)  => pure(),
+        err(e) => println("error: " + e)
+    }
+);
