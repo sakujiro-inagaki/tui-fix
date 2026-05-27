@@ -146,7 +146,13 @@ _loop = |state, prev_buf, rect| (
                 if needs_resync {
                     let new_sz = *Yaynu.Term.Size::TermSize::get;
                     let new_rect = Rect::make(0, 0, new_sz.@cols, new_sz.@rows);
-                    pure $ (Buffer::empty(new_sz.@cols, new_sz.@rows), new_rect)
+                    // Sentinel 0x0 buffer: forces `diff_to_ansi` to take its
+                    // size-mismatch path on the next frame, which emits
+                    // `clear_screen` before the full redraw. Without this,
+                    // prev and next would share the new dimensions and only
+                    // changed cells would be repainted — leaving stale glyphs
+                    // from the old layout wherever the new layout is blank.
+                    pure $ (Buffer::empty(0, 0), new_rect)
                 } else {
                     pure $ (next_buf, rect)
                 }
