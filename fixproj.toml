@@ -1,6 +1,6 @@
 [general]
 name = "tui"
-version = "0.1.1"
+version = "0.1.2"
 fix_version = "1.3.0"
 description = "Yaynu.Tui — immediate-mode TUI widget toolkit on top of term"
 license = "MIT"
