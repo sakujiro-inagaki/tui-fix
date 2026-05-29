@@ -1,10 +1,10 @@
-proj_file_hash = "584fdede9f6ac8f79acd1fbe6f4d480f"
+proj_file_hash = "c04d434f8009fe8e31f592d6233691b1"
 
 [[dependencies]]
 name = "term"
-version = "0.1.0"
-path = ".fixlang/deps/term_0.1.0"
+version = "0.2.0"
+path = ".fixlang/deps/term_0.2.0"
 
 [dependencies.git]
 repo = "https://github.com/sakujiro-inagaki/term-fix.git"
-rev = "4ce0da7cd573ae85462dab7d90215a9c550887ff"
+rev = "f47a8ab07a475f25072822ddfd9d581dc9bcbecc"

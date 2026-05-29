@@ -201,10 +201,13 @@ _process_events = |events, state| (
 //
 // Bare-ESC fallback: if the drain produced no keys but the input was
 // a single 0x1B byte (the canonical "lone Escape" case after the CSI
-// sub-parser left it as incomplete), the caller in
-// `_read_key_events` adds a `Key::escape` event. This helper itself
-// stays pure and returns `[]` in that case so unit tests of the
-// drain alone are easy to read.
+// sub-parser left it as incomplete), the pure helper `_finalize_keys`
+// — invoked by `_read_key_events` — adds a `Key::escape` event. This
+// drainer itself stays pure and returns `[]` in that case so unit
+// tests of the drain alone are easy to read. Crucially, unknown CSI
+// sequences that the parser drops via `invalid(n)` also yield `[]`
+// here; `_finalize_keys` does NOT synthesise an escape for them
+// because the original buffer is longer than one byte.
 _drain_keys : Array U8 -> Array Yaynu.Term.Key::Key;
 _drain_keys = |bytes| (
     let n = bytes.get_size;
@@ -226,24 +229,36 @@ _drain_keys = |bytes| (
     ))
 );
 
+// Pure bare-ESC fallback. If the drain produced no keys AND the
+// original buffer was exactly one byte equal to 0x1B, synthesise a
+// single `Key::escape`. Any other zero-key drain (notably unknown
+// CSI sequences the parser dropped via `invalid(n)`, such as
+// `ESC[1;3A`) yields no key and therefore no event.
+_finalize_keys : Array U8 -> Array Yaynu.Term.Key::Key -> Array Yaynu.Term.Key::Key;
+_finalize_keys = |bytes, keys| (
+    if keys.get_size == 0 && bytes.get_size == 1 && bytes.@(0) == 27_U8 {
+        [Yaynu.Term.Key::Key::escape()]
+    } else {
+        keys
+    }
+);
+
 // Drain everything currently available on stdin (best-effort) and
 // parse the resulting buffer into a sequence of `Event::key` events.
 // A bare ESC with no follow-up bytes is interpreted as `Key::escape`
 // — without this, a lone Esc press would be reported as
 // `Key::unknown([0x1B])` because the CSI sub-parser leaves it as
-// `incomplete`.
+// `incomplete`. The synthesis fires only when the drained buffer is
+// exactly one byte equal to 0x1B (see `_finalize_keys`). Unknown
+// CSI sequences that the parser drops via `invalid(n)` — e.g.
+// `ESC[1;3A` for Alt+Shift+Up, or any vendor-specific extension —
+// produce no event for that drain.
 _read_key_events : U8 -> IOFail (Array Event);
 _read_key_events = |first_byte| (
     let rest = *Yaynu.Term.Input::read_available;
     let bytes : Array U8 = Array::from_map(1 + rest.get_size, |i|
         if i == 0 { first_byte } else { rest.@(i - 1) }
     );
-    let keys = _drain_keys(bytes);
-    let keys = if keys.get_size == 0 && bytes.get_size > 0 && bytes.@(0) == 27_U8 {
-        // Bare ESC. Preserve single-event behaviour.
-        [Yaynu.Term.Key::Key::escape()]
-    } else {
-        keys
-    };
+    let keys = _finalize_keys(bytes, _drain_keys(bytes));
     pure $ keys.to_iter.map(|k| Event::key(k)).to_array
 );

@@ -50,5 +50,49 @@ run = (
     assert_eq(|_|"partial len", keys_partial.get_size, 1);;
     assert_eq(|_|"partial[0]", keys_partial.@(0).as_char, "あ");;
 
+    // --- Regression: bare-ESC fallback no longer misfires on unknown CSI.
+
+    // ESC[Z (Shift+Tab). Under term 0.2.0 the parser recognises this as
+    // Key::back_tab; the upstream fix means _drain_keys returns one key,
+    // not an empty array as in term 0.1.0. Either way, _read_key_events
+    // never falls back to bare-ESC for this buffer.
+    let bytes_shift_tab : Array U8 = [27_U8, 91_U8, 90_U8];
+    let keys_shift_tab = _drain_keys(bytes_shift_tab);
+    assert_eq(|_|"ESC[Z drains to back_tab", keys_shift_tab.get_size, 1);;
+    assert_eq(|_|"ESC[Z drains to back_tab[0]", keys_shift_tab.@(0).is_back_tab, true);;
+
+    // ESC[1;3A (Alt+Shift+Up). Modified-arrow forms are still unrecognised
+    // in term 0.2.0 and surface as invalid(6); _drain_keys yields nothing.
+    let bytes_alt_shift_up : Array U8 = [27_U8, 91_U8, 49_U8, 59_U8, 51_U8, 65_U8];
+    let keys_alt_shift_up = _drain_keys(bytes_alt_shift_up);
+    assert_eq(|_|"ESC[1;3A drains to no keys", keys_alt_shift_up.get_size, 0);;
+
+    // _finalize_keys: bare ESC → Key::escape (the only synthesis case).
+    let fin_bare = _finalize_keys([27_U8], []);
+    assert_eq(|_|"bare ESC → Key::escape len", fin_bare.get_size, 1);;
+    assert_eq(|_|"bare ESC → Key::escape[0]", fin_bare.@(0).is_escape, true);;
+
+    // _finalize_keys: ESC[Z buffer + empty drained keys → no synthesis.
+    // (Hypothetical under term 0.2.0 where the parser returns back_tab,
+    // but the pure helper must still refuse to invent escape for a
+    // multi-byte buffer.)
+    let fin_shift_tab = _finalize_keys([27_U8, 91_U8, 90_U8], []);
+    assert_eq(|_|"ESC[Z + no drained keys → no event", fin_shift_tab.get_size, 0);;
+
+    // _finalize_keys: ESC[1;3A buffer + empty drained keys → no synthesis.
+    let fin_alt_shift_up = _finalize_keys(
+        [27_U8, 91_U8, 49_U8, 59_U8, 51_U8, 65_U8], []);
+    assert_eq(|_|"ESC[1;3A + no drained keys → no event",
+              fin_alt_shift_up.get_size, 0);;
+
+    // _finalize_keys: non-empty drained keys must pass through unchanged.
+    // Guards against accidentally clobbering a real key.
+    let real_keys : Array Yaynu.Term.Key::Key = [Yaynu.Term.Key::Key::char("a")];
+    let fin_pass = _finalize_keys([97_U8], real_keys);
+    assert_eq(|_|"non-empty drained keys → passthrough len",
+              fin_pass.get_size, 1);;
+    assert_eq(|_|"non-empty drained keys → passthrough[0]",
+              fin_pass.@(0).as_char, "a");;
+
     pure()
 );
